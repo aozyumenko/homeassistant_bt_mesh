@@ -1,0 +1,7 @@
+{
+  "config": {
+    "progress": {
+      "join_start": "Waiting for the provisioning to start."
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "config": {
+    "flow_title": "Flow title",
+    "step": {
+      "user": {
+        "data": {
+            "path": "Serial Device Path"
+        },
+        "description": "Provisioning in a Mesh network"
+      },
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
+    },
+    "abort": {
+      "join_failed": "Provisioning failed.",
+      "join_token_invalid": "Invalid token"
+    },
+    "progress": {
+      "join_start": "Waiting for the provisioning to start."
+    }
+  }
+
+}
