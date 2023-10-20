@@ -38,6 +38,7 @@ from .const import (
     BT_MESH_APPLICATION,
     BT_MESH_CFGCLIENT_CONF,
     CONF_APP_KEY,
+    CONF_SENSOR_PROPERTY_ID,
 )
 from .bt_mesh import BtMeshApplication, BtMeshModelId
 from .mesh_cfgclient_conf import MeshCfgclientConf
@@ -47,12 +48,16 @@ _LOGGER = logging.getLogger(__name__)
 
 u16_int = vol.All(vol.Coerce(int), vol.Range(min=0x0000, max=0xffff))
 
+
+# TODO: drop device configuration
 DEVICE_SCHEMA = {
     vol.Optional(CONF_NAME): cv.string,
     vol.Optional(CONF_ADDRESS): u16_int,
     vol.Optional(CONF_MODEL): u16_int,
     vol.Optional(CONF_APP_KEY): cv.positive_int,
+#    vol.Optional(CONF_SENSOR_PROPERTY_ID): u16_int,
 }
+
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -75,12 +80,18 @@ CONFIG_SCHEMA = vol.Schema(
 def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration from config."""
 
-    _LOGGER.debug("async_setup(): entry=%s" % config)
+    if DOMAIN in hass.data:
+        # one instance only
+        return False
 
-    conf = hass.data.setdefault(DOMAIN, {})
-    conf[BT_MESH_CONFIG] = config
-    # TODO: set own UUID
-    conf[BT_MESH_CFGCLIENT_CONF] = MeshCfgclientConf(
+    logging.basicConfig(level=logging.DEBUG)
+
+    _LOGGER.debug("async_setup(): config=%s" % config)
+
+
+    entry_data = hass.data.setdefault(DOMAIN, {})
+    entry_data[BT_MESH_CONFIG] = config       # TODO config[DOMAIN]
+    entry_data[BT_MESH_CFGCLIENT_CONF] = MeshCfgclientConf(
         filename=MESH_CFGCLIENT_CONFIG_PATH
     )
 
@@ -102,16 +113,15 @@ def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 
-
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Set up OctoPrint from a config entry."""
 
-    _LOGGER.debug("async_setup_entry(): entry=%s" % entry.data)
+    _LOGGER.debug("async_setup_entry(): config_entry=%s" % config_entry.data)
 
-    entry_data = hass.data[DOMAIN].setdefault(entry.entry_id, {})
+    entry_data = hass.data[DOMAIN].setdefault(config_entry.entry_id, {})
 
     application = BtMeshApplication(
-        token=entry.data["token"]
+        token=config_entry.data["token"]
     )
     # Function: process exception
     await application.dbus_connect()
@@ -121,22 +131,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     for platform in PLATFORMS:
         hass.async_create_task(
-            hass.config_entries.async_forward_entry_setup(entry, platform)
+            hass.config_entries.async_forward_entry_setup(config_entry, platform)
         )
 
     return True
 
 
 
-
-
-
 class BtMeshEntity(Entity):
-    """Representation of a Bluetooth Mesh device."""
+    """Representation of a BT Mesh service."""
 
-    def __init__(self, application, uuid, cid, pid, vid, addr, model_id, app_key):
+    _application: BtMeshApplication
+
+    def __init__(self, application, uuid, cid, pid, vid, addr, model_id, app_index):
         """Initialize the device."""
-        self.application = application
+        self._application = application
+        self._unicast_addr = addr
+        self._model_id = model_id
+        self._app_index = app_index
 
         self.uuid: str = uuid
         self.cid: int = cid
@@ -145,14 +157,8 @@ class BtMeshEntity(Entity):
         self.product: str = "0x%04x" % (self.pid)
         self.company: str = "0x%04x" % (self.cid)
 
-        self.unicast_addr = addr
-        self.model_id = model_id
-        self.app_key = app_key
-
-        self.state_on_off = False
-
-        self._attr_name = "%04x-%s" % (self.unicast_addr, BtMeshModelId.get_name(model_id))
-        self._attr_unique_id = "%04x-%04x" % (self.unicast_addr, self.model_id)
+        self._attr_name = "%04x-%s" % (self._unicast_addr, BtMeshModelId.get_name(model_id))
+        self._attr_unique_id = "%04x-%04x" % (self._unicast_addr, self._model_id)
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self.uuid)},
@@ -162,15 +168,22 @@ class BtMeshEntity(Entity):
             sw_version=("0x%04x") % self.vid,
         )
 
-    async def async_update(self):
-        """Request the device to update its status."""
+    @property
+    def unicast_addr(self):
+        """Return the unicast address of the node."""
+        return self._unicast_addr
 
-        if self.model_id == BtMeshModelId.GenericOnOffServer:
-            self.state_on_off = await self.application.mesh_generic_onoff_get(
-                self.unicast_addr,
-                self.app_key
-            )
+    @property
+    def model_id(self):
+        """Return the Model Id."""
+        return self._model_id
 
-    # Switch
+    @property
+    def app_index(self):
+        """Return the application key index of the model."""
+        return self._app_index
 
-    # Light
+    @property
+    def application(self):
+        """Return the BT Mesh Client application."""
+        return self._application

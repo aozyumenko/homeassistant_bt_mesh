@@ -1,10 +1,12 @@
 {
   "domain": "bt_mesh",
-  "name": "Bluetooth Mesh Client",
+  "name": "Bluetooth Mesh Integration",
   "config_flow": true,
-  "documentation": "https://",
-  "issue_tracker": "https://",
-  "requirements": [],
+  "documentation": "https://github.com/aozyumenko/homeassistant_bt_mesh",
+  "issue_tracker": "https://github.com/aozyumenko/homeassistant_bt_mesh/issues",
+  "requirements": [
+    "aozyumenko-bluetooth-mesh>=1.0.1"
+  ],
   "dependencies": [],
   "codeowners": ["@aozyumenko"],
   "version": "0.1.0",

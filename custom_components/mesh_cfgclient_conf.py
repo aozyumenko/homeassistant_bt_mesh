@@ -79,6 +79,11 @@ MeshNodePatterns: Final = {
         ELEMENT_SATURATION: [
             BtMeshModelId.LightHSLSaturationServer
         ],
+    },
+    BtMeshModelId.SensorServer: {
+        ELEMENT_MAIN: [
+            BtMeshModelId.SensorServer
+        ],
     }
 }
 
