@@ -1,15 +1,22 @@
-"""..."""
-import logging
+"""Config flow for BT Mesh."""
 
 import asyncio
+import async_timeout
 
 from homeassistant import config_entries
+from homeassistant.data_entry_flow import FlowResult
 import voluptuous as vol
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    BT_MESH_CONFIG,
+    CONF_DBUS_APP_PATH,
+    CONF_DBUS_APP_TOKEN,
+    CONF_MESH_CFGCLIENT_CONFIG_PATH,
+    DEFAULT_MESH_JOIN_TIMEOUT
+)
 from .bt_mesh import BtMeshApplication
 
-
-
+import logging
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -17,68 +24,57 @@ _LOGGER = logging.getLogger(__name__)
 class BtMeshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Bluetooth Mesh config flow."""
 
-    join_task = None
 
     def __init__(self):
-        self.token = None
+        _LOGGER.debug("BtMeshConfigFlow::init()")
         self.pin = None
-        self._bt_mesh = None
-        _LOGGER.error("BtMeshConfigFlow: new class")
+        self.config = None
+        self.bt_mesh = None
+        self.join_task = None
+        self.pin = None
+        self.token = None
 
-    async def async_step_user(self, user_input):
-        _LOGGER.error("async_step_user: cur_step=%s, %s" % (self.cur_step, user_input))
 
-        if user_input is not None:
-            pass  # TODO: process info
+    async def async_step_user(self, user_input=None) -> FlowResult:
+        _LOGGER.debug("async_step_user: cur_step=%s, user_input=%s" % (self.cur_step, user_input))
 
-        if user_input is None:
-            return self._join_start(user_input)
+        # export domain config
+        if self.config is None:
+            entry_data = self.hass.data[DOMAIN]
+            self.config = entry_data[BT_MESH_CONFIG]
 
-#        if self.token is None:
-#            return await self.async_step_join_start()
+        # create BT Mesh application
+        _LOGGER.debug("async_step_user: bt_mesh=%s" % (self.bt_mesh))
+        if self.bt_mesh is None:
+            self.bt_mesh = BtMeshApplication(
+                path=self.config[CONF_DBUS_APP_PATH]
+            )
 
-        my_list = ["one", "two", "three"]
-        #schema = vol.Schema({vol.Required("password"): str})
-        schema = vol.Schema({vol.Required("path"): vol.In(my_list)})
-        return self.async_show_form(
-            step_id="user", data_schema=schema
+        if self.join_task is None:
+            # start join and provision task
+            self.join_task = self.hass.async_create_task(
+                self._task_join_routine(user_input)
+            )
+
+        return self.async_show_progress(
+            step_id="join_start",
+            progress_action="join_start",
         )
 
 
+    async def async_step_join_start(self, user_input):
+        _LOGGER.error("join_start(): user_input=%s" % (user_input))
+
+        try:
+            self.pin = user_input["pin"]
+            return self.async_show_progress_done(next_step_id="join_pin_show")
+        except Exception as err:
+            return self.async_show_progress_done(next_step_id="join_failed")
 
 
-    #######################################
-
-    def _join_start(self, user_input):
-        if self._bt_mesh is None:
-            self._bt_mesh = BtMeshApplication()
-
-        _LOGGER.error("_join_start() test, self.join_task=%s" % (self.join_task.__class__.__name__))
-        if not self.join_task:
-            self.join_task = self.hass.async_create_task(
-                self._task_join()
-            )
-
-            _LOGGER.error("async_step_join_start(), self.join_task=%s" % (self.join_task.__class__.__name__))
-            return self.async_show_progress(
-                step_id="join_pin_wait", progress_action="join_start"
-            )
-
-        #?????
-        #try:
-        #    await self.join_task
-        #except Exception as err:  # pylint: disable=broad-except
-        #    _LOGGER.exception("... : %s", err)
-        #    return self.async_show_progress_done(next_step_id="join_failed")
-        return self.async_abort(reason="join_failed2")
-
-
-
-
-    async def async_step_join_pin_wait(self, user_input):
-        _LOGGER.error("join_pin_wait(): user_input=%s" % (user_input))
-        self.pin = user_input["pin"]
-        return self.async_show_progress_done(next_step_id="join_pin_show")
+    async def async_step_join_failed(self, user_input):
+        _LOGGER.error("join_failed(): user_input=%s" % (user_input))
+        return self.async_abort(reason="join_failed")
 
 
     async def async_step_join_pin_show(self, user_input):
@@ -91,50 +87,52 @@ class BtMeshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_join_finish(self, user_input):
         if self.token is not None:
+            _LOGGER.info("Join finished, token %x" % (self.token))
             return self.async_create_entry(
-                title = "",
+                title = "Bluetooth Mesh Integration",
                 data = {
-                    # TODO: add UUID
-                    "token": self.token
+                    CONF_DBUS_APP_PATH: self.config[CONF_DBUS_APP_PATH],
+                    CONF_DBUS_APP_TOKEN: self.token,
+                    CONF_MESH_CFGCLIENT_CONFIG_PATH: self.config[ CONF_MESH_CFGCLIENT_CONFIG_PATH]
                 }
             )
         else:
-            _LOGGER.error("join_finish(): invalid token")
+            _LOGGER.info("Join failed: invalid token")
             return self.async_abort(reason="join_token_invalid")
 
 
+    # async join tasks
+    async def _task_join_routine(self, user_input: dict):
+        _LOGGER.debug("_task_join(): start")
 
-   ##################################
-   # async join tasks
+        try:
+            async with async_timeout.timeout(DEFAULT_MESH_JOIN_TIMEOUT):
+                try:
+                    self.token = await self.bt_mesh.mesh_join(self)
+                except Exception as err:
+                    _LOGGER.error("Join failed: %s::%s", err, err.__class__.__name__)
+        except:
+            _LOGGER.info("Join timeout expired")
+            pass
+        finally:
+            if self.cur_step['step_id'] == "join_start":
+                self.hass.async_create_task(
+                    self.hass.config_entries.flow.async_configure(
+                        flow_id=self.flow_id, user_input=user_input
+                    )
+                )
+
 
     def _cb_display_numeric(self, type: str, number: int):
-        _LOGGER.error("display_numeric: type=%s, number=%d" % (type, number))
+        _LOGGER.debug("Display numeric, type: %s, number: %d" % (type, number))
+
+        user_input = {}
+
         if type == "out-numeric":
-            self.hass.async_create_task(
-                self.hass.config_entries.flow.async_configure(
-                    flow_id=self.flow_id, user_input={ "pin": str(number)}
-                )
+            user_input["pin"] = str(number)
+
+        self.hass.async_create_task(
+            self.hass.config_entries.flow.async_configure(
+                flow_id=self.flow_id, user_input=user_input
             )
-        else:
-            self.hass.async_create_task(
-                self.hass.config_entries.flow.async_abort(
-                    flow_id=self.flow_id
-                )
-            )
-
-
-    # FIxMe: _task_join_routine
-    async def _task_join(self):
-        _LOGGER.error("_task_join(): start")
-        try:
-            token = await self._bt_mesh.mesh_join(self)
-            _LOGGER.error("_task_join(): token=%s", token)
-        except Exception as err:
-            _LOGGER.error("_task_join() error: %s::%s", err, err.__class__.__name__)
-            # does not work
-            return self.async_abort(reason="join_failed")
-        finally:
-            _LOGGER.error("_task_join(): finally, token=%s", token)
-            self.token = token
-
-    ####################################################################
+        )

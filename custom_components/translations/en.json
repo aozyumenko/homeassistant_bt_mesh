@@ -1,7 +1,11 @@
 {
   "config": {
+    "abort": {
+      "join_failed": "Failed to connect to BT Mesh server.",
+      "join_token_invalid": "Failed to provision to the BT Mesh server."
+    },
     "progress": {
-      "join_start": "Waiting for the provisioning to start."
+      "join_start": "Waiting for the provision to start..."
     }
   }
 }

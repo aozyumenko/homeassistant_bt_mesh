@@ -33,18 +33,6 @@ _LOGGER = logging.getLogger(__name__)
 
 
 
-SENSOR_TYPES = {
-    PropertyID.PRECISE_TOTAL_DEVICE_ENERGY_USE: SensorEntityDescription(
-        key="totalenergy",
-        device_class=SensorDeviceClass.ENERGY,
-        native_unit_of_measurement=ENERGY_KILO_WATT_HOUR,
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        name="Total Energy",
-    ),
-}
-
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigType,
@@ -54,10 +42,7 @@ async def async_setup_entry(
 
     entry_data = hass.data[DOMAIN][config_entry.entry_id]
     application = entry_data[BT_MESH_APPLICATION]
-    mesh_cfgclient_conf = hass.data[DOMAIN][BT_MESH_CFGCLIENT_CONF]
-
-    _LOGGER.debug("async_setup_entry(): config_entry: %s, entry_data=%s, application=%s" % (config_entry.data, entry_data, application))
-    _LOGGER.debug("async_setup_entry(): devices=%s" % (mesh_cfgclient_conf.devices))
+    mesh_cfgclient_conf = entry_data[BT_MESH_CFGCLIENT_CONF]
 
     entities = []
     devices = mesh_cfgclient_conf.devices
@@ -69,13 +54,16 @@ async def async_setup_entry(
                 element_unicast_addr = device_unicat_addr + element_idx
                 app_index = device['app_keys'][element_idx][BtMeshModelId.GenericOnOffServer]
                 #_LOGGER.debug("uuid=%s, %d, addr=0x%04x, app_key=%d" % (device['UUID'], element_idx, element_unicast_addr, app_key))
+
                 # TODO: get descriptor
+                # TODO: processing error
                 descriptor = await application.sensor_descriptor_get(element_unicast_addr, app_index);
                 if hasattr(descriptor, "__iter__"):
                     for propery in descriptor:
                         if hasattr(propery, "sensor_property_id"):
                             property_id = int(propery['sensor_property_id'])
-#                            _LOGGER.debug("uuid=%s, %d, addr=0x%04x, app_index=%d, property_id=0x%x" % (device['UUID'], element_idx, element_unicast_addr, app_index, property_id))
+                            sensor_update_interval = int(round(propery['sensor_update_interval']))
+#                            _LOGGER.debug("uuid=%s, %d, addr=0x%04x, app_index=%d, property_id=0x%x, sensor_update_interval=%d" % (device['UUID'], element_idx, element_unicast_addr, app_index, property_id, sensor_update_interval))
 
                             sensor = create_sensor(
                                 application=application,
@@ -89,7 +77,6 @@ async def async_setup_entry(
                             )
 
                             if sensor != None:
-                                val = await sensor.sensor_get()
                                 entities.append(sensor)
 
                         else:
@@ -117,7 +104,7 @@ def create_sensor(
     app_index: int,
     property_id: int
 ) -> BtMeshSensorEntity | None:
-    _LOGGER.debug("uuid=%s, addr=0x%04x, app_index=%d, property_id=0x%x" % (uuid, addr, app_index, property_id))
+#    _LOGGER.debug("uuid=%s, addr=0x%04x, app_index=%d, property_id=0x%x" % (uuid, addr, app_index, property_id))
 
     if property_id in SENSOR_CLASSES:
         return SENSOR_CLASSES[property_id](
@@ -131,7 +118,7 @@ def create_sensor(
         )
 
     else:
-        _LOGGER.debug("    NOT FOUND")
+#        _LOGGER.debug("    NOT FOUND")
         return None
 
 

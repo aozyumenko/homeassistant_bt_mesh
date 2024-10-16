@@ -1,14 +1,12 @@
-"""..."""
+"""mesh_cfgclient configuration file reader"""
 from __future__ import annotations
 
-import logging
 import os.path, time
 import json
 
 from .bt_mesh import BtMeshApplication, BtMeshModelId
 
-
-
+import logging
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -137,7 +135,7 @@ class MeshCfgclientConf:
                         partial_elements_match[pattern_element_name] = element_idx
                         break
 
-            if len(pattern_elements.keys()) == len(partial_elements_match.keys()):
+            if len(pattern_elements.keys()) == len(partial_elements_match.keys()) and not partial_elements_match in elements_match:
                 elements_match.append(partial_elements_match)
 
         return elements_match if len(elements_match) > 0 else None
@@ -259,7 +257,7 @@ class MeshCfgclientConf:
             return False
 
     def load(self):
+        # FIXME: self.devices should be defined in any case
         with open(self.filename) as meshcfg_file:
             data = json.load(meshcfg_file)
             self.devices = self._parse(data)
-            _LOGGER.debug(self.devices)

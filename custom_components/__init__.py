@@ -1,26 +1,11 @@
-"""Bluetooth Mesh Client integration."""
+"""BT Mesh integration."""
 from __future__ import annotations
 
 import asyncio
-import logging
 
-#from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
-#from homeassistant.const import (
-#    CONF_DEVICES,
-#    CONF_DISCOVERY,
-#    CONF_MAC,
-#    CONF_NAME,
-#    CONF_TEMPERATURE_UNIT,
-#    CONF_UNIQUE_ID,
-#    EVENT_HOMEASSISTANT_STOP,
-#)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import config_validation as cv
-#from homeassistant.helpers.entity_registry import (
-#    async_entries_for_device,
-#)
-#from homeassistant.util import dt
 from homeassistant.helpers.entity import DeviceInfo, Entity
 from homeassistant.const import CONF_DEVICES, CONF_NAME, CONF_ADDRESS, CONF_MODEL
 
@@ -33,30 +18,22 @@ import voluptuous as vol
 from .const import (
     DOMAIN,
     PLATFORMS,
-    MESH_CFGCLIENT_CONFIG_PATH,
     BT_MESH_CONFIG,
     BT_MESH_APPLICATION,
     BT_MESH_CFGCLIENT_CONF,
-    CONF_APP_KEY,
-    CONF_SENSOR_PROPERTY_ID,
+    CONF_DBUS_APP_PATH,
+    CONF_DBUS_APP_TOKEN,
+    CONF_MESH_CFGCLIENT_CONFIG_PATH,
+    DEFAULT_DBUS_APP_PATH,
+    DEFAULT_MESH_CFGCLIENT_CONFIG_PATH,
 )
 from .bt_mesh import BtMeshApplication, BtMeshModelId
 from .mesh_cfgclient_conf import MeshCfgclientConf
 
 
+import logging
 _LOGGER = logging.getLogger(__name__)
 
-u16_int = vol.All(vol.Coerce(int), vol.Range(min=0x0000, max=0xffff))
-
-
-# TODO: drop device configuration
-DEVICE_SCHEMA = {
-    vol.Optional(CONF_NAME): cv.string,
-    vol.Optional(CONF_ADDRESS): u16_int,
-    vol.Optional(CONF_MODEL): u16_int,
-    vol.Optional(CONF_APP_KEY): cv.positive_int,
-#    vol.Optional(CONF_SENSOR_PROPERTY_ID): u16_int,
-}
 
 
 CONFIG_SCHEMA = vol.Schema(
@@ -64,14 +41,13 @@ CONFIG_SCHEMA = vol.Schema(
         DOMAIN: vol.All(
             vol.Schema(
                 {
-                    vol.Optional(CONF_DEVICES, default=[]): vol.All(
-                        cv.ensure_list, [DEVICE_SCHEMA]
-                    ),
+                    vol.Optional(CONF_DBUS_APP_PATH, default=DEFAULT_DBUS_APP_PATH): cv.string,
+                    vol.Optional(CONF_MESH_CFGCLIENT_CONFIG_PATH, default=DEFAULT_MESH_CFGCLIENT_CONFIG_PATH): cv.string,
                 }
             )
         )
     },
-    extra=vol.ALLOW_EXTRA, # FixMe:???
+    extra=vol.ALLOW_EXTRA
 )
 
 
@@ -86,43 +62,31 @@ def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     logging.basicConfig(level=logging.DEBUG)
 
-    _LOGGER.debug("async_setup(): config=%s" % config)
-
-
     entry_data = hass.data.setdefault(DOMAIN, {})
-    entry_data[BT_MESH_CONFIG] = config       # TODO config[DOMAIN]
-    entry_data[BT_MESH_CFGCLIENT_CONF] = MeshCfgclientConf(
-        filename=MESH_CFGCLIENT_CONFIG_PATH
-    )
-
-    async def reload_mesh_network_handler(hass):
-        """Reload Mesh network configuration task."""
-        while True:
-            conf = hass.data.get(DOMAIN)
-            mesh_cgfclient_conf = conf[BT_MESH_CFGCLIENT_CONF]
-            if mesh_cgfclient_conf.is_modified():
-                _LOGGER.debug("reload_mesh_network_handler(), config modified")
-                devices = mesh_cgfclient_conf.load()
-                # TODO: update mesh config
-
-            await asyncio.sleep(5)
-
-    hass.loop.create_task(reload_mesh_network_handler(hass))
+    entry_data[BT_MESH_CONFIG] = config[DOMAIN]
 
     return True
 
 
 
 async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
-    """Set up OctoPrint from a config entry."""
+    """Set up BT Mesh from a config entry."""
 
     _LOGGER.debug("async_setup_entry(): config_entry=%s" % config_entry.data)
 
     entry_data = hass.data[DOMAIN].setdefault(config_entry.entry_id, {})
 
-    application = BtMeshApplication(
-        token=config_entry.data["token"]
+    mesh_cfgclient_conf = MeshCfgclientConf(
+        filename=config_entry.data[CONF_MESH_CFGCLIENT_CONFIG_PATH]
     )
+    mesh_cfgclient_conf.load()
+    entry_data[BT_MESH_CFGCLIENT_CONF] = mesh_cfgclient_conf
+
+    application = BtMeshApplication(
+        path=config_entry.data[CONF_DBUS_APP_PATH],
+        token=config_entry.data[CONF_DBUS_APP_TOKEN]
+    )
+
     # Function: process exception
     await application.dbus_connect()
     await application.connect()
@@ -133,6 +97,19 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
         hass.async_create_task(
             hass.config_entries.async_forward_entry_setup(config_entry, platform)
         )
+
+    # create a task to track changes in the mesh-cfgclient config file
+    async def reload_mesh_network_handler(hass):
+        """Reload Mesh network configuration task."""
+        while True:
+            if mesh_cfgclient_conf.is_modified():
+                _LOGGER.debug("reload_mesh_network_handler(), config modified")
+                devices = mesh_cfgclient_conf.load()
+                # TODO: update mesh config
+
+            await asyncio.sleep(5)
+
+    hass.loop.create_task(reload_mesh_network_handler(hass))
 
     return True
 
@@ -158,7 +135,7 @@ class BtMeshEntity(Entity):
         self.company: str = "0x%04x" % (self.cid)
 
         self._attr_name = "%04x-%s" % (self._unicast_addr, BtMeshModelId.get_name(model_id))
-        self._attr_unique_id = "%04x-%04x" % (self._unicast_addr, self._model_id)
+        self._attr_unique_id = "%04x-%04x-%s" % (self._unicast_addr, self._model_id, uuid)
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self.uuid)},

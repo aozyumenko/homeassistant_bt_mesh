@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 
 from typing import Union
 
@@ -16,8 +15,7 @@ from .const import DOMAIN, BT_MESH_APPLICATION, BT_MESH_CFGCLIENT_CONF
 from .bt_mesh import BtMeshModelId
 from .mesh_cfgclient_conf import ELEMENT_MAIN
 
-
-
+import logging
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -31,13 +29,11 @@ async def async_setup_entry(
 
     entry_data = hass.data[DOMAIN][config_entry.entry_id]
     application = entry_data[BT_MESH_APPLICATION]
-    mesh_cfgclient_conf = hass.data[DOMAIN][BT_MESH_CFGCLIENT_CONF]
-
-#    _LOGGER.debug("async_setup_entry(): config_entry: %s, entry_data=%s, application=%s" % (config_entry.data, entry_data, application))
-#    _LOGGER.debug("async_setup_entry(): devices=%s" % (mesh_cfgclient_conf.devices))
+    mesh_cfgclient_conf = entry_data[BT_MESH_CFGCLIENT_CONF]
 
     entities = []
     devices = mesh_cfgclient_conf.devices
+#    _LOGGER.debug("devices=%s" % (devices))
     for device in devices:
         try:
             device_unicat_addr = device['unicastAddress']
@@ -45,7 +41,7 @@ async def async_setup_entry(
                 element_idx = generic_onoff[ELEMENT_MAIN]
                 element_unicast_addr = device_unicat_addr + element_idx
                 app_key = device['app_keys'][element_idx][BtMeshModelId.GenericOnOffServer]
-                _LOGGER.debug("uuid=%s, %d, addr=0x%04x, app_key=%d" % (device['UUID'], element_idx, element_unicast_addr, app_key))
+#                _LOGGER.debug("uuid=%s, %d, addr=0x%04x, app_key=%d" % (device['UUID'], element_idx, element_unicast_addr, app_key))
                 entities.append(
                     BtMeshSwitch_GenericOnOff(
                         application=application,
@@ -63,6 +59,8 @@ async def async_setup_entry(
 
     add_entities(entities)
 
+    application.onoff_init_receive_status()
+
     return True
 
 
@@ -72,12 +70,6 @@ class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
 
     _state_on_off: Union[None, bool] = None
     _on_off_lock = asyncio.Lock()
-
-    #async def async_added_to_hass(self):
-    #    """Register device notification."""
-        #await self.async_initialize_device(self._ads_var, pyads.PLCTYPE_BOOL)
-    #    pass
-
 
 
     @property
@@ -104,8 +96,8 @@ class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
                     self.app_index
                 )
             except Exception:
-                _LOGGER.debug("failed to get OnOff status: addr %04x, app_index %d" %
-                              (self.unicast_addr, self.app_index))
+#                _LOGGER.debug("failed to get OnOff status: addr %04x, app_index %d" %
+#                              (self.unicast_addr, self.app_index))
                 self._state_on_off = None
 
 

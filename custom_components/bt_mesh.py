@@ -5,11 +5,11 @@ from __future__ import annotations
 import sys
 import time
 import asyncio
-import logging
 from enum import IntEnum
 
 from bluetooth_mesh.application import Application, Element, Capabilities
 from bluetooth_mesh.messages.config import GATTNamespaceDescriptor
+from bluetooth_mesh.messages.generic.onoff import GenericOnOffOpcode
 from bluetooth_mesh.messages.sensor import SensorOpcode, SensorSetupOpcode
 from bluetooth_mesh.models import (
     ConfigClient,
@@ -28,13 +28,13 @@ from bluetooth_mesh.models.light.hsl import LightHSLClient
 from bluetooth_mesh.messages.properties import PropertyID
 
 from .const import (
-    DBUS_APP_PATH,
+    DEFAULT_DBUS_APP_PATH,
+    G_SEND_INTERVAL,
     G_TIMEOUT,
     G_MESH_SENSOR_CACHE_TIMEOUT,
 )
 
-
-
+import logging
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -66,6 +66,7 @@ class BtMeshModelId(IntEnumName):
     LightHSLSetupServer = 0x1308
     LightHSLHueServer = 0x130a
     LightHSLSaturationServer = 0x130b
+
 
 class BtSensorAttrPropertyId(IntEnumName):
     """ BT Mesh sensor property names """
@@ -105,18 +106,22 @@ class BtMeshApplication(Application):
     CAPABILITIES = [Capabilities.OUT_NUMERIC]
 
     CRPL = 32768
-    PATH = DBUS_APP_PATH
+    PATH = DEFAULT_DBUS_APP_PATH
     TOKEN = None
 
+
+    # TODO: add comment
     _sensor_cache: dict
 
 
-    def __init__(self, token=None):
+    def __init__(self, path, token=None):
         """Initialize bluetooth_mesh application."""
         loop = asyncio.get_event_loop()
         super().__init__(loop)
 
+        self.PATH = path
         self.TOKEN = token
+
         # FixMe: callback interface to separetly class
         self.pin_cb = None
 
@@ -128,6 +133,7 @@ class BtMeshApplication(Application):
 
     ##################################################
     def display_numeric(self, type: str, number: int):
+        """...."""
         if self.pin_cb:
             self.pin_cb._cb_display_numeric(type, number)
 
@@ -139,36 +145,82 @@ class BtMeshApplication(Application):
         return token
     ##########################################
 
-    # Config
-
-    # TODO: pub_set
-
-
 
     # Switch
+
+    def onoff_init_receive_status(self):
+        def receive_status(
+            _source: int,
+            _app_index: int,
+            _destination: Union[int, UUID],
+            message: ParsedMeshMessage,
+        ):
+            _LOGGER.debug("receive %04x->%04x %s" % (_source, _destination, message))
+
+        client = self.elements[0][GenericOnOffClient]
+        client.app_message_callbacks[GenericOnOffOpcode.GENERIC_ONOFF_STATUS].add(receive_status)
+
 
     async def mesh_generic_onoff_get(self, address, app_index):
         """Get GenericOnOff state"""
         client = self.elements[0][GenericOnOffClient]
-        # FixMe: exception
-        try:
-            result = await client.get([address], app_index=app_index, timeout=G_TIMEOUT)
-            # FixMe: check result
-            #_LOGGER.error("mesh_generic_onoff_get(): address=0x%x, present_onoff=%d" % (address, result[address].present_onoff))
-            return result[address].present_onoff != 0
-        except Exception:
-            _LOGGER.error("mesh_generic_onoff_get(): address=%04x, app_index=%d, %s" % (address, app_index, Exception))
 
-        return False
+        result = await client.get([address], app_index=app_index, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
+        return result[address].present_onoff != 0
 
 
     async def mesh_generic_onoff_set(self, address, app_index, state):
         """Set GenericOnOff state"""
         client = self.elements[0][GenericOnOffClient]
         #_LOGGER.debug("mesh_generic_onoff_set(): started")
-        await client.set([address], app_index=app_index, onoff=state, transition_time=0.0, timeout=G_TIMEOUT)
+        await client.set([address], app_index=app_index, onoff=state, transition_time=0.0, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
         #_LOGGER.debug("mesh_generic_onoff_set(): finished")
 
+
+    # LightLightness
+    async def mesh_light_lightness_set(self, address, app_index, lightness):
+        """Set LightLightness lightness"""
+        client = self.elements[0][LightLightnessClient]
+        await client.set([address], app_index=app_index, lightness=lightness, transition_time=0.0, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
+
+
+    async def mesh_light_ctl_get(self, address, app_index):
+        """Get LightCTL state"""
+        client = self.elements[0][LightCTLClient]
+        result = await client.get([address], app_index=app_index, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
+        return result[address]
+
+    async def mesh_light_ctl_set(self, address, app_index, lightness, temperature):
+        """Set LightCTL temperature"""
+        client = self.elements[0][LightCTLClient]
+        await client.set_unack(address,
+                               app_index=app_index,
+                               ctl_lightness=lightness,
+                               ctl_temperature=temperature,
+                               ctl_delta_uv=0,
+                               transition_time=0.0)
+
+    async def mesh_light_ctl_temperature_range_get(self, address, app_index):
+        """Get LightCTL temperature range"""
+        client = self.elements[0][LightCTLClient]
+        result = await client.temperature_range_get([address], app_index=app_index, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
+        return result[address]
+
+
+    async def mesh_light_hsl_get(self, address, app_index):
+        """Get LightHSL state"""
+        client = self.elements[0][LightHSLClient]
+        result = await client.get([address], app_index=app_index, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
+        return result[address]
+
+    async def mesh_light_hsl_set(self, address, app_index, lightness, hue, saturation):
+        """Set LightHSL lightness, hue and saturation"""
+        client = self.elements[0][LightHSLClient]
+        await client.set_unack(address, app_index=app_index,
+                               hsl_lightness=lightness,
+                               hsl_hue=hue,
+                               hsl_saturation=saturation,
+                               transition_time=0.0)
 
 
     # Sensor
@@ -184,8 +236,7 @@ class BtMeshApplication(Application):
             self.sensor_cache_update(_source, message['sensor_status'])
 
         client = self.elements[0][SensorClient]
-        client.app_message_callbacks[SensorOpcode.SENSOR_STATUS].add(receive_status)
-
+        client.app_message_callbacks[GenericOnOffOpcode.GENERIC_ONOFF_STATUS].add(receive_status)
 
     def sensor_cache_update(self, addr, sensor_status):
         for property in sensor_status:
@@ -193,16 +244,13 @@ class BtMeshApplication(Application):
                 property_id = property['sensor_setting_property_id']
                 key = "%04x.%04x" % (addr, property_id)
                 self._sensor_cache[key] = { 'last_update': time.time(), 'property': property }
-                #_LOGGER.debug("property_id=0x%04x, key=%s, property=%s" % (property_id, key, property))
             except Exception:
                 pass
 
-
     async def sensor_descriptor_get(self, address, app_index):
         client = self.elements[0][SensorClient]
-        # FixMe: exception
         try:
-            result = await client.descriptor_get([address], app_index=app_index, timeout=G_TIMEOUT)
+            result = await client.descriptor_get([address], app_index=app_index, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
             return result[address];
         except Exception:
             _LOGGER.error("sensor_descriptor_get(): address=%04x, app_index=%d, %s" % (address, app_index, Exception))
@@ -218,7 +266,7 @@ class BtMeshApplication(Application):
             client = self.elements[0][SensorClient]
             try:
                 result = await client.get([addr], app_index=app_index,
-                                          timeout=G_TIMEOUT)
+                                          send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
                 self.sensor_cache_update(addr, result[addr])
                 line = self._sensor_cache.setdefault(key, None)
             except Exception:
