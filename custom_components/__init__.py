@@ -111,6 +111,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
 
     hass.loop.create_task(reload_mesh_network_handler(hass))
 
+    # start Time Server
+    application.time_server_init()
+
     return True
 
 
