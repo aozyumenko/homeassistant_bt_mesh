@@ -4,13 +4,14 @@ from __future__ import annotations
 import asyncio
 
 from typing import Union
+from construct import Container
 
 from homeassistant.core import HomeAssistant
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from . import BtMeshEntity
+from .bt_mesh.entity import BtMeshEntity
 from .const import DOMAIN, BT_MESH_APPLICATION, BT_MESH_CFGCLIENT_CONF
 from .bt_mesh import BtMeshModelId
 from .mesh_cfgclient_conf import ELEMENT_MAIN
@@ -59,55 +60,39 @@ async def async_setup_entry(
 
     add_entities(entities)
 
-    application.onoff_init_receive_status()
+    application.generic_onoff_init_receive_status()
 
     return True
-
 
 
 class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
     """Representation of an Bluetooth Mesh Generic On/Off service."""
 
-    _state_on_off: Union[None, bool] = None
-    _on_off_lock = asyncio.Lock()
-
+    _state: Union[None, Container] = None
 
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return self._state_on_off is not None
-
+        return self._state is not None
 
     @property
     def is_on(self) -> bool:
         """Return True if the entity is on."""
-        if self._state_on_off is not None:
-            return self._state_on_off
+        if self._state is not None and 'present_onoff' in self._state:
+            return self._state.present_onoff
         else:
             return False
 
-
     async def async_update(self):
         """Request the device to update its status."""
-        async with self._on_off_lock:
-            try:
-                self._state_on_off = await self.application.mesh_generic_onoff_get(
-                    self.unicast_addr,
-                    self.app_index
-                )
-            except Exception:
-#                _LOGGER.debug("failed to get OnOff status: addr %04x, app_index %d" %
-#                              (self.unicast_addr, self.app_index))
-                self._state_on_off = None
-
+        self._state = await self.application.generic_onoff_get(self.unicast_addr, self.app_index)
 
     async def async_turn_on(self, **kwargs):
         """Turn the switch on."""
-        async with self._on_off_lock:
-            await self.application.mesh_generic_onoff_set(self.unicast_addr, self.app_index, 1)
-
+        await self.application.generic_onoff_set(self.unicast_addr, self.app_index, 1)
+        self.application.cache_invalidate(self.unicast_addr, None)
 
     async def async_turn_off(self, **kwargs):
         """Turn the switch off."""
-        async with self._on_off_lock:
-            await self.application.mesh_generic_onoff_set(self.unicast_addr, self.app_index, 0)
+        await self.application.generic_onoff_set(self.unicast_addr, self.app_index, 0)
+        self.application.cache_invalidate(self.unicast_addr, None)
