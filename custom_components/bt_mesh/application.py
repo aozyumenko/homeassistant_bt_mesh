@@ -3,6 +3,7 @@ from __future__ import annotations
 
 
 import asyncio
+from construct import Container
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -292,7 +293,7 @@ class BtMeshApplication(Application):
 
 
     # Switch
-    def generic_onoff_init_receive_status(self):
+    def generic_onoff_init_receive_status(self) -> None:
         def receive_status(
             _source: int,
             _app_index: int,
@@ -309,7 +310,7 @@ class BtMeshApplication(Application):
         client = self.elements[0][GenericOnOffClient]
         client.app_message_callbacks[GenericOnOffOpcode.GENERIC_ONOFF_STATUS].add(receive_status)
 
-    async def generic_onoff_get(self, address, app_index):
+    async def generic_onoff_get(self, address, app_index) -> Container | None:
         """Get GenericOnOff state"""
         client = self.elements[0][GenericOnOffClient]
         return await self.cache_proxy(
@@ -324,7 +325,7 @@ class BtMeshApplication(Application):
             extra_key=ThermostatSubOpcode.THERMOSTAT_RANGE_STATUS
         )
 
-    async def generic_onoff_set(self, address, app_index, state):
+    async def generic_onoff_set(self, address, app_index, state) -> None:
         """Set GenericOnOff state"""
         client = self.elements[0][GenericOnOffClient]
         async with self._lock:
@@ -335,10 +336,10 @@ class BtMeshApplication(Application):
                 send_interval=G_SEND_INTERVAL,
                 timeout=G_TIMEOUT
             )
-
+        self.cache_invalidate(address, None)
 
     # LightLightness
-    def light_lightness_init_receive_status(self):
+    def light_lightness_init_receive_status(self) -> None:
         def receive_status(
             _source: int,
             _app_index: int,
@@ -350,12 +351,11 @@ class BtMeshApplication(Application):
                 BtMeshModelId.LightLightnessSetupServer,
                 message.light_lightness_status
             )
-            #_LOGGER.debug(message.light_lightness_status)
 
         client = self.elements[0][LightLightnessClient]
         client.app_message_callbacks[LightLightnessOpcode.LIGHT_LIGHTNESS_STATUS].add(receive_status)
 
-    async def light_lightness_get(self, address, app_index):
+    async def light_lightness_get(self, address, app_index) -> Container | None:
         """Get LightLightness state"""
         client = self.elements[0][LightLightnessClient]
         return await self.cache_proxy(
@@ -365,11 +365,11 @@ class BtMeshApplication(Application):
                 [address],
                 app_index=app_index,
                 send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT,
+                timeout=G_TIMEOUT
             )
         )
 
-    async def light_lightness_set(self, address, app_index, lightness):
+    async def light_lightness_set(self, address, app_index, lightness) -> None:
         """Set LightLightness lightness"""
         client = self.elements[0][LightLightnessClient]
         async with self._lock:
@@ -380,55 +380,136 @@ class BtMeshApplication(Application):
                 send_interval=G_SEND_INTERVAL,
                 timeout=G_TIMEOUT
             )
+        self.cache_invalidate(address, None)
 
 
-    async def mesh_light_ctl_get(self, address, app_index):
+    # LightCTL
+    def light_ctl_init_receive_status(self):
+        def receive_status(
+            _source: int,
+            _app_index: int,
+            _destination: Union[int, UUID],
+            message: ParsedMeshMessage,
+        ) -> None:
+            self.cache_update(
+                _source,
+                BtMeshModelId.LightCTLSetupServer,
+                message.light_ctl_status,
+                extra_key=LightCTLOpcode.LIGHT_CTL_STATUS
+            )
+
+        def receive_temperature_range_status(
+            _source: int,
+            _app_index: int,
+            _destination: Union[int, UUID],
+            message: ParsedMeshMessage,
+        ) -> Container | None:
+            self.cache_update(
+                _source,
+                BtMeshModelId.LightCTLSetupServer,
+                message.light_ctl_temperature_range_status,
+                extra_key=LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS
+            )
+
+        client = self.elements[0][LightLightnessClient]
+        client.app_message_callbacks[LightCTLOpcode.LIGHT_CTL_STATUS].add(receive_status)
+        client.app_message_callbacks[LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS].add(receive_temperature_range_status)
+
+    async def light_ctl_get(self, address, app_index) -> Container | None:
         """Get LightCTL state"""
         client = self.elements[0][LightCTLClient]
-        result = await client.get([address], app_index=app_index, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
-        return result[address]
+        return await self.cache_proxy(
+            address,
+            BtMeshModelId.LightCTLSetupServer,
+            client.get(
+                [address],
+                app_index=app_index,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT
+            ),
+            extra_key=LightCTLOpcode.LIGHT_CTL_STATUS
+        )
 
-    async def mesh_light_ctl_set(self, address, app_index, lightness, temperature):
-        """Set LightCTL temperature"""
+    async def light_ctl_set(self, address, app_index, lightness, temperature) -> None:
+        """Set LightCTL state"""
         client = self.elements[0][LightCTLClient]
         async with self._lock:
             await client.set(
-                address,
+                [address],
                 app_index=app_index,
                 ctl_lightness=lightness,
                 ctl_temperature=temperature,
                 ctl_delta_uv=0,
                 send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT)
+                timeout=G_TIMEOUT
+            )
+        self.cache_invalidate(address, None)
 
-    async def mesh_light_ctl_temperature_range_get(self, address, app_index):
+    async def light_ctl_temperature_range_get(self, address, app_index) -> Container | None:
         """Get LightCTL temperature range"""
         client = self.elements[0][LightCTLClient]
-        result = await client.temperature_range_get([address], app_index=app_index, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
-        return result[address]
+        return await self.cache_proxy(
+            address,
+            BtMeshModelId.LightCTLSetupServer,
+            client.temperature_range_get(
+                [address],
+                app_index=app_index,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT
+            ),
+            extra_key=LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS
+        )
 
 
-    async def mesh_light_hsl_get(self, address, app_index):
+    # LightHSL
+    def light_hsl_init_receive_status(self) -> None:
+        def receive_status(
+            _source: int,
+            _app_index: int,
+            _destination: Union[int, UUID],
+            message: ParsedMeshMessage,
+        ):
+            self.cache_update(
+                _source,
+                BtMeshModelId.LightHSLSetupServer,
+                message.light_hsl_status
+            )
+
+        client = self.elements[0][LightHSLClient]
+        client.app_message_callbacks[LightHSLOpcode.LIGHT_HSL_STATUS].add(receive_status)
+
+    async def light_hsl_get(self, address, app_index) -> Container | None:
         """Get LightHSL state"""
         client = self.elements[0][LightHSLClient]
-        result = await client.get([address], app_index=app_index, send_interval=G_SEND_INTERVAL, timeout=G_TIMEOUT)
-        return result[address]
+        return await self.cache_proxy(
+            address,
+            BtMeshModelId.LightHSLSetupServer,
+            client.get(
+                [address],
+                app_index=app_index,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT
+            )
+        )
 
-    async def mesh_light_hsl_set(self, address, app_index, lightness, hue, saturation):
+    async def light_hsl_set(self, address, app_index, lightness, hue, saturation) -> None:
         """Set LightHSL lightness, hue and saturation"""
         client = self.elements[0][LightHSLClient]
         async with self._lock:
-            await client.set_unack(
-                address,
+            await client.set(
+                [address],
                 app_index=app_index,
                 hsl_lightness=lightness,
                 hsl_hue=hue,
-                hsl_saturation=saturation
+                hsl_saturation=saturation,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT
             )
+        self.cache_invalidate(address, None)
 
 
     # Sensor
-    def sensor_init_receive_status(self):
+    def sensor_init_receive_status(self) -> None:
         def receive_status(
             _source: int,
             _app_index: int,
@@ -446,7 +527,7 @@ class BtMeshApplication(Application):
         client = self.elements[0][SensorClient]
         client.app_message_callbacks[SensorOpcode.SENSOR_STATUS].add(receive_status)
 
-    async def sensor_descriptor_get(self, address, app_index):
+    async def sensor_descriptor_get(self, address, app_index) -> Container | None:
         client = self.elements[0][SensorClient]
         try:
             result = await client.descriptor_get(
@@ -460,7 +541,7 @@ class BtMeshApplication(Application):
 
         return None
 
-    async def sensor_get(self, address, app_index, property_id):
+    async def sensor_get(self, address, app_index, property_id) -> Container | None:
         client = self.elements[0][SensorClient]
         result = await self.cache_proxy(
             address,
@@ -480,20 +561,23 @@ class BtMeshApplication(Application):
 
 
     # Generic Battery
-    def generic_battery_init_receive_status(self):
+    def generic_battery_init_receive_status(self) -> None:
         def receive_status(
             _source: int,
             _app_index: int,
             _destination: Union[int, UUID],
             message: ParsedMeshMessage,
         ):
-#            _LOGGER.debug("receive %04x->%04x %s" % (_source, _destination, message))
-            self.cache_update(_source, BtMeshModelId.GenericBatteryServer, message.generic_battery_status)
+            self.cache_update(
+                _source,
+                BtMeshModelId.GenericBatteryServer,
+                message.generic_battery_status
+            )
 
         client = self.elements[0][GenericBatteryClient]
         client.app_message_callbacks[GenericBatteryOpcode.GENERIC_BATTERY_STATUS].add(receive_status)
 
-    async def generic_battery_get(self, address, app_index):
+    async def generic_battery_get(self, address, app_index) -> Container | None:
         """Get GenericBattery state"""
         client = self.elements[0][GenericBatteryClient]
         return await self.cache_proxy(
@@ -509,7 +593,7 @@ class BtMeshApplication(Application):
 
 
     # Vendor Thermostat
-    def thermostat_init_receive_status(self):
+    def thermostat_init_receive_status(self) -> None:
         def receive_status(
             _source: int,
             _app_index: int,
@@ -536,7 +620,7 @@ class BtMeshApplication(Application):
         client = self.elements[0][ThermostatClient]
         client.app_message_callbacks[ThermostatOpcode.VENDOR_THERMOSTAT].add(receive_status)
 
-    async def thermostat_get(self, address, app_index):
+    async def thermostat_get(self, address, app_index) -> Container | None:
         """Get Vendor Thermostat state"""
         client = self.elements[0][ThermostatClient]
         return await self.cache_proxy(
@@ -551,7 +635,7 @@ class BtMeshApplication(Application):
             extra_key=ThermostatSubOpcode.THERMOSTAT_STATUS
         )
 
-    async def thermostat_range_get(self, address, app_index):
+    async def thermostat_range_get(self, address, app_index) -> Container | None:
         """Get Vendor Thermostat range"""
         client = self.elements[0][ThermostatClient]
         return await self.cache_proxy(
@@ -566,12 +650,12 @@ class BtMeshApplication(Application):
             extra_key=ThermostatSubOpcode.THERMOSTAT_RANGE_STATUS
         )
 
-    async def thermostat_set(self, address, app_index, onoff, temperature):
+    async def thermostat_set(self, address, app_index, onoff, temperature) -> None:
         """Get Vendor Thermostat state"""
         client = self.elements[0][ThermostatClient]
 
-        try:
-            result = await client.set(
+        async with self._lock:
+            await client.set(
                 [address],
                 app_index=app_index,
                 onoff=onoff,
@@ -585,6 +669,3 @@ class BtMeshApplication(Application):
                 BtMeshModelId.ThermostatServer,
                 extra_key=ThermostatSubOpcode.THERMOSTAT_STATUS
             )
-            return result[address]
-        except Exception:
-            return None

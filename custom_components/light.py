@@ -113,6 +113,8 @@ async def async_setup_entry(
     add_entities(entities)
 
     application.light_lightness_init_receive_status()
+    application.light_ctl_init_receive_status()
+    application.light_hsl_init_receive_status()
 
     return True
 
@@ -122,31 +124,7 @@ class BtMeshLight_LightLightness(BtMeshEntity, LightEntity):
 
     _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
-    _state: Union[None, Container] = None
-
-    def __init__(self, **kwds: Any) -> None:
-        """Initialize BT Mesh LightLightness."""
-        super().__init__(**kwds)
-
-    @property
-    def available(self) -> bool:
-        """If the webhook is not established, mark as unavailable."""
-        return self._state is not None
-
-    @property
-    def brightness(self):
-        """Return the brightness of this light between 0..255."""
-        if self._state is not None and 'present_lightness' in self._state:
-            return int(self._state.present_lightness / 256)
-        else:
-            return 0
-
-    @property
-    def is_on(self) -> bool:
-        if self._state is not None and 'present_lightness' in self._state:
-            return self._state.present_lightness > 0
-        else:
-            return 0
+    _attr_available = False
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
@@ -158,7 +136,6 @@ class BtMeshLight_LightLightness(BtMeshEntity, LightEntity):
                 self.app_index,
                 1
             )
-            self.application.cache_invalidate(self.unicast_addr, None)
         else:
             if brightness == 255:
                 lightness = 65535
@@ -177,11 +154,18 @@ class BtMeshLight_LightLightness(BtMeshEntity, LightEntity):
             self.app_index,
             0
         )
-        self.application.cache_invalidate(self.unicast_addr, None)
 
     async def async_update(self) -> None:
-        self._state = await self.application.light_lightness_get(self.unicast_addr, self.app_index)
-        #_LOGGER.debug(self._state)
+        result = await self.application.light_lightness_get(
+            self.unicast_addr,
+            self.app_index
+        )
+        if result is not None:
+            self._attr_available = True
+            self._attr_is_on = result.present_lightness > 0
+            self._attr_brightness = int(result.present_lightness / 256)
+        else:
+            self._attr_available = False
 
 
 class BtMeshLight_LightCTL(BtMeshEntity, LightEntity):
@@ -189,54 +173,18 @@ class BtMeshLight_LightCTL(BtMeshEntity, LightEntity):
 
     _attr_color_mode = ColorMode.COLOR_TEMP
     _attr_supported_color_modes = {ColorMode.COLOR_TEMP}
-    _attr_supported_features = LightEntityFeature.TRANSITION
-
-    _req_lock = asyncio.Lock()
-
-    def __init__(self, **kwds: Any) -> None:
-        """Initialize BT Mesh LightCTL."""
-
-        super().__init__(
-            **kwds,
-        )
-
-    async def async_update(self) -> None:
-        try:
-            async with self._req_lock:
-                result = await self.application.mesh_light_ctl_get(self.unicast_addr, self.app_index)
-                self._attr_is_on = result['present_ctl_lightness'] > 0
-                self._attr_brightness = int(result['present_ctl_lightness'] / 256)
-                self._attr_color_temp = math.ceil(1000000 / result['present_ctl_temperature'])
-        except Exception:
-#            _LOGGER.debug("failed to get LightCTL status: addr %04x, app_index %d" %
-#                          (self.unicast_addr, self.app_index))
-            self._attr_is_on = None
-            self._attr_brightness = None
-            self._attr_color_temp = None
-
-        try:
-            async with self._req_lock:
-                result = await self.application.mesh_light_ctl_temperature_range_get(self.unicast_addr, self.app_index)
-            if not result is None:
-                self._attr_max_mireds = math.ceil(1000000 / result['range_min'])
-                self._attr_min_mireds = math.ceil(1000000 / result['range_max'])
-        except Exception:
-#            _LOGGER.debug("failed to get LightCTL Temperature Range status: addr %04x, app_index %d" %
-#                          (self.unicast_addr, self.app_index))
-            pass
+#    _attr_supported_features = LightEntityFeature.TRANSITION
+    _attr_available = False
 
     async def async_turn_on(self, **kwargs):
         """Turn the specified light on."""
 
-        self._attr_is_on = True
         if len(kwargs) == 0:
-            try:
-                async with self._req_lock:
-                    await self.application.generic_onoff_set(self.unicast_addr, self.app_index, 1)
-            except Exception:
-                self._attr_is_on = True
-            else:
-                self._attr_is_on = None
+            await self.application.generic_onoff_set(
+                self.unicast_addr,
+                self.app_index,
+                1
+            )
         else:
             if ATTR_BRIGHTNESS in kwargs:
                 self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
@@ -244,20 +192,50 @@ class BtMeshLight_LightCTL(BtMeshEntity, LightEntity):
             if ATTR_COLOR_TEMP in kwargs:
                 self._attr_color_temp = kwargs[ATTR_COLOR_TEMP]
 
-            if self._attr_brightness and self._attr_color_temp:
-                ligthness = self._attr_brightness * 256
-                temperature = math.ceil(1000000 / self._attr_color_temp)
+            if self._attr_brightness == 255:
+                lightness = 65535
+            else:
+                lightness = self._attr_brightness * 256
+            temperature = math.ceil(1000000 / self._attr_color_temp)
 
-                async with self._req_lock:
-                    await self.application.mesh_light_ctl_set(self.unicast_addr, self.app_index, ligthness, temperature)
-
+            await self.application.light_ctl_set(
+                self.unicast_addr,
+                self.app_index,
+                lightness,
+                temperature
+            )
 
     async def async_turn_off(self, **kwargs):
         """Turn the specified light off."""
-        self._attr_is_on = False
+        await self.application.generic_onoff_set(
+            self.unicast_addr,
+            self.app_index,
+            0
+        )
 
-        async with self._req_lock:
-            await self.application.generic_onoff_set(self.unicast_addr, self.app_index, 0)
+    async def async_update(self) -> None:
+        result = await self.application.light_ctl_get(
+            self.unicast_addr,
+            self.app_index
+        )
+        if result is not None:
+            self._attr_available = True
+            self._attr_is_on = result.present_ctl_lightness > 0
+            self._attr_brightness = int(result.present_ctl_lightness / 256)
+            self._attr_color_temp = math.ceil(1000000 / result.present_ctl_temperature)
+        else:
+            self._attr_available = False
+
+        result = await self.application.light_ctl_temperature_range_get(
+            self.unicast_addr,
+            self.app_index
+        )
+        if result is not None:
+            self._attr_available = True
+            self._attr_max_mireds = math.ceil(1000000 / result.range_min)
+            self._attr_min_mireds = math.ceil(1000000 / result.range_max)
+        else:
+            self._attr_available = False
 
 
 class BtMeshLight_LightHSL(BtMeshEntity, LightEntity):
@@ -265,50 +243,19 @@ class BtMeshLight_LightHSL(BtMeshEntity, LightEntity):
 
     _attr_color_mode = ColorMode.HS
     _attr_supported_color_modes = {ColorMode.HS}
-    _attr_supported_features = LightEntityFeature.TRANSITION
-
-    _req_lock = asyncio.Lock()
-
-
-    def __init__(self, **kwds: Any) -> None:
-        """Initialize BT Mesh LightCTL."""
-
-        self._attr_is_on = None
-
-        super().__init__(
-            **kwds,
-        )
-
-    async def async_update(self) -> None:
-        try:
-            async with self._req_lock:
-                result = await self.application.mesh_light_hsl_get(self.unicast_addr, self.app_index)
-            self._attr_is_on = result['hsl_lightness'] > 0
-            self._attr_brightness = math.ceil(result['hsl_lightness'] / 256.0)
-            self._attr_hs_color = [
-                math.ceil(result['hsl_hue'] * 360. / 65535.0),
-                math.ceil(result['hsl_saturation'] * 100.0 / 65535.0)
-            ]
-#            _LOGGER.debug("result=%s" % (result))
-        except Exception as err:
-#            _LOGGER.debug("failed to get LightHSL status: addr %04x, app_index %d (%s)" %
-#                          (self.unicast_addr, self.app_index, err))
-            self._attr_hs_color = None
-            self._attr_brightness = None
-            self._attr_is_on = None
+#    _attr_supported_features = LightEntityFeature.TRANSITION
+    _attr_available = False
 
 
     async def async_turn_on(self, **kwargs):
         """Turn the specified light on."""
 
-#        _LOGGER.debug("_attr_is_on=%s" % (self._attr_is_on))
-        if self._attr_is_on is None:
-            return
-
         if len(kwargs) == 0:
-            self._attr_is_on = True
-            async with self._req_lock:
-                await self.application.generic_onoff_set(self.unicast_addr, self.app_index, 1)
+            await self.application.generic_onoff_set(
+                self.unicast_addr,
+                self.app_index,
+                1
+            )
         else:
             if ATTR_BRIGHTNESS in kwargs:
                 self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
@@ -317,22 +264,41 @@ class BtMeshLight_LightHSL(BtMeshEntity, LightEntity):
                 self._attr_hs_color = kwargs[ATTR_HS_COLOR]
 
             if self._attr_brightness and self._attr_hs_color:
-                ligthness = self._attr_brightness * 256
+                if self._attr_brightness == 255:
+                    lightness = 65535
+                else:
+                    lightness = self._attr_brightness * 256
                 hue = math.ceil(self._attr_hs_color[0] * 65535.0 / 360.0)
                 saturation = math.ceil(self._attr_hs_color[1] * 65535.0 / 100.0)
 
-                async with self._req_lock:
-                    await self.application.mesh_light_hsl_set(
-                        self.unicast_addr,
-                        self.app_index,
-                        ligthness,
-                        hue,
-                        saturation
-                    )
+                await self.application.light_hsl_set(
+                    self.unicast_addr,
+                    self.app_index,
+                    lightness,
+                    hue,
+                    saturation
+                )
 
     async def async_turn_off(self, **kwargs):
         """Turn the specified light off."""
-        self._attr_is_on = False
+        await self.application.generic_onoff_set(
+            self.unicast_addr,
+            self.app_index,
+            0
+        )
 
-        async with self._req_lock:
-            await self.application.generic_onoff_set(self.unicast_addr, self.app_index, 0)
+    async def async_update(self) -> None:
+        result = await self.application.light_hsl_get(
+            self.unicast_addr,
+            self.app_index
+        )
+        if result is not None:
+            self._attr_available = True
+            self._attr_is_on = result.hsl_lightness > 0
+            self._attr_brightness = int(result.hsl_lightness / 256)
+            self._attr_hs_color = [
+                math.ceil(result['hsl_hue'] * 360.0 / 65535.0),
+                math.ceil(result['hsl_saturation'] * 100.0 / 65535.0)
+            ]
+        else:
+            self._attr_available = False

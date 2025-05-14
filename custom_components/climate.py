@@ -87,7 +87,7 @@ class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        return self._state is not None
+        return self._state is not None and self._range is not None
 
     @property
     def current_temperature(self) -> float | None:
@@ -107,21 +107,21 @@ class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
     def min_temp(self) -> float:
         """Return the lowbound target temperature we try to reach."""
         if self._range is None:
-            return None
+            return 40
         return self._range.min_temperature
 
     @property
     def max_temp(self) -> float:
         """Return the highbound target temperature we try to reach."""
         if self._range is None:
-            return None
+            return 0
         return self._range.max_temperature
 
     @property
     def hvac_action(self) -> HVACAction:
         """Return the current state of the thermostat."""
         if self._state is None:
-            return None
+            return HVACAction.OFF
 
         onoff_status = self._state['onoff_status']
         heater_status = self._state['heater_status']
@@ -136,7 +136,7 @@ class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
         """Return the current state of the thermostat."""
 
         if self._state is None:
-            return None
+            return HVACMode.OFF
 
         onoff_status = self._state['onoff_status']
         if not onoff_status:
