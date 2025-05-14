@@ -4,7 +4,8 @@ from __future__ import annotations
 import os.path, time
 import json
 
-from .bt_mesh import BtMeshApplication, BtMeshModelId
+from .bt_mesh import BtMeshModelId
+from .bt_mesh.application import BtMeshApplication
 
 import logging
 _LOGGER = logging.getLogger(__name__)
@@ -42,6 +43,11 @@ MeshNodePatterns: Final = {
         ELEMENT_MAIN: [
             BtMeshModelId.GenericPowerOnOffServer,
             BtMeshModelId.GenericPowerOnOffSetupServer
+        ]
+    },
+    BtMeshModelId.GenericBatteryServer: {
+        ELEMENT_MAIN: [
+            BtMeshModelId.GenericBatteryServer
         ]
     },
     BtMeshModelId.LightLightnessSetupServer: {
@@ -82,7 +88,12 @@ MeshNodePatterns: Final = {
         ELEMENT_MAIN: [
             BtMeshModelId.SensorServer
         ],
-    }
+    },
+    BtMeshModelId.ThermostatServer: {
+        ELEMENT_MAIN: [
+            BtMeshModelId.ThermostatServer
+        ],
+    },
 }
 
 

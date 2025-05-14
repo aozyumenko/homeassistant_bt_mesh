@@ -11,10 +11,12 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
 )
 from homeassistant.const import (
-    ENERGY_KILO_WATT_HOUR,
-    ELECTRIC_POTENTIAL_VOLT,
-    ELECTRIC_CURRENT_AMPERE,
-    POWER_WATT
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfEnergy,
+    UnitOfElectricPotential,
+    UnitOfElectricCurrent,
+    UnitOfPower,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -23,7 +25,7 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from bluetooth_mesh.messages.properties import PropertyID
 
-from . import BtMeshEntity
+from .bt_mesh.entity import BtMeshEntity
 from .const import DOMAIN, BT_MESH_APPLICATION, BT_MESH_CFGCLIENT_CONF
 from .bt_mesh import BtMeshModelId, BtSensorAttrPropertyId
 from .mesh_cfgclient_conf import ELEMENT_MAIN
@@ -49,39 +51,62 @@ async def async_setup_entry(
     for device in devices:
         try:
             device_unicat_addr = device['unicastAddress']
-            for sensor in device['models'][BtMeshModelId.SensorServer]:
-                element_idx = sensor[ELEMENT_MAIN]
-                element_unicast_addr = device_unicat_addr + element_idx
-                app_index = device['app_keys'][element_idx][BtMeshModelId.GenericOnOffServer]
-                #_LOGGER.debug("uuid=%s, %d, addr=0x%04x, app_key=%d" % (device['UUID'], element_idx, element_unicast_addr, app_key))
 
-                # TODO: get descriptor
-                # TODO: processing error
-                descriptor = await application.sensor_descriptor_get(element_unicast_addr, app_index);
-                if hasattr(descriptor, "__iter__"):
-                    for propery in descriptor:
-                        if hasattr(propery, "sensor_property_id"):
-                            property_id = int(propery['sensor_property_id'])
-                            sensor_update_interval = int(round(propery['sensor_update_interval']))
-#                            _LOGGER.debug("uuid=%s, %d, addr=0x%04x, app_index=%d, property_id=0x%x, sensor_update_interval=%d" % (device['UUID'], element_idx, element_unicast_addr, app_index, property_id, sensor_update_interval))
+            # listing Sensor models
+            if BtMeshModelId.SensorServer in device['models']:
+                for sensor in device['models'][BtMeshModelId.SensorServer]:
+                    element_idx = sensor[ELEMENT_MAIN]
+                    element_unicast_addr = device_unicat_addr + element_idx
+                    app_index = device['app_keys'][element_idx][BtMeshModelId.SensorServer]
+#                    _LOGGER.debug("SensorServer: uuid=%s, %d, addr=0x%04x, app_key=%d" % (device['UUID'], element_idx, element_unicast_addr, app_index))
 
-                            sensor = create_sensor(
-                                application=application,
-                                uuid=device['UUID'],
-                                cid=int(device['cid']),
-                                pid=int(device['pid']),
-                                vid=int(device['vid']),
-                                addr=element_unicast_addr,
-                                app_index=app_index,
-                                property_id=property_id
-                            )
+                    # TODO: get descriptor
+                    # TODO: processing error
+                    descriptor = await application.sensor_descriptor_get(element_unicast_addr, app_index);
+                    if hasattr(descriptor, "__iter__"):
+                        for propery in descriptor:
+                            if hasattr(propery, "sensor_property_id"):
+                                property_id = int(propery['sensor_property_id'])
+                                sensor_update_interval = int(round(propery['sensor_update_interval']))
+#                                _LOGGER.debug("uuid=%s, %d, addr=0x%04x, app_index=%d, property_id=0x%x, sensor_update_interval=%d" % (device['UUID'], element_idx, element_unicast_addr, app_index, property_id, sensor_update_interval))
 
-                            if sensor != None:
-                                entities.append(sensor)
+                                sensor = create_sensor(
+                                    application=application,
+                                    uuid=device['UUID'],
+                                    cid=int(device['cid']),
+                                    pid=int(device['pid']),
+                                    vid=int(device['vid']),
+                                    addr=element_unicast_addr,
+                                    app_index=app_index,
+                                    property_id=property_id
+                                )
 
-                        else:
-                            # TODO: set aside the node for later processing
-                            pass
+                                if sensor != None:
+                                    entities.append(sensor)
+
+                            else:
+                                # TODO: set aside the node for later processing
+                                pass
+
+            # listing Generic Battery model
+            if BtMeshModelId.GenericBatteryServer in device['models']:
+#                _LOGGER.debug(device['models'][BtMeshModelId.GenericBatteryServer])
+                for generic_battery in device['models'][BtMeshModelId.GenericBatteryServer]:
+                    element_idx = generic_battery[ELEMENT_MAIN]
+                    element_unicast_addr = device_unicat_addr + element_idx
+                    app_index = device['app_keys'][element_idx][BtMeshModelId.GenericBatteryServer]
+#                    _LOGGER.debug("GenericBatteryServer: uuid=%s, %d, addr=0x%04x, app_key=%d" % (device['UUID'], element_idx, element_unicast_addr, app_index))
+
+                    sensor = BtMeshGenericBatteryEntity(
+                        application=application,
+                        uuid=device['UUID'],
+                        cid=int(device['cid']),
+                        pid=int(device['pid']),
+                        vid=int(device['vid']),
+                        addr=element_unicast_addr,
+                        app_index=app_index
+                    )
+                    entities.append(sensor)
 
         except KeyError:
             continue
@@ -89,10 +114,59 @@ async def async_setup_entry(
     add_entities(entities)
 
     application.sensor_init_receive_status()
+    application.generic_battery_init_receive_status()
 
     return True
 
 
+
+# BT Mesh Generic Battery Server
+
+class BtMeshGenericBatteryEntity(BtMeshEntity, SensorEntity):
+    """Class for Bluetooth Mesh Generic Battery sensor."""
+
+    def __init__(
+        self,
+        application,
+        uuid,
+        cid,
+        pid,
+        vid,
+        addr,
+        app_index
+    ) -> None:
+        BtMeshEntity.__init__(
+            self,
+            application,
+            uuid,
+            cid,
+            pid,
+            vid,
+            addr,
+            BtMeshModelId.GenericBatteryServer,
+            app_index
+        )
+        self.entity_description = SensorEntityDescription(
+            key="battery_level",
+            device_class=SensorDeviceClass.BATTERY,
+            native_unit_of_measurement=PERCENTAGE,
+            state_class=SensorStateClass.MEASUREMENT,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            name="Battery Level",
+        )
+
+    async def async_update(self) -> None:
+        """Fetch new state data for the sensor."""
+        result = await self.application.generic_battery_get(
+            self.unicast_addr,
+            self.app_index
+        )
+        if result is not None:
+            self._attr_native_value = result.battery_level
+
+
+
+# BT Mesh Sensor Server
 
 def create_sensor(
     application: BtMeshApplication,
@@ -104,8 +178,6 @@ def create_sensor(
     app_index: int,
     property_id: int
 ) -> BtMeshSensorEntity | None:
-#    _LOGGER.debug("uuid=%s, addr=0x%04x, app_index=%d, property_id=0x%x" % (uuid, addr, app_index, property_id))
-
     if property_id in SENSOR_CLASSES:
         return SENSOR_CLASSES[property_id](
             application=application,
@@ -116,9 +188,7 @@ def create_sensor(
             addr=addr,
             app_index=app_index
         )
-
     else:
-#        _LOGGER.debug("    NOT FOUND")
         return None
 
 
@@ -187,7 +257,7 @@ class BtMeshSensor_PresentDeviceInputPower(BtMeshSensorEntity):
             SensorEntityDescription(
                 key="present_device_input_power",
                 device_class=SensorDeviceClass.POWER,
-                native_unit_of_measurement=POWER_WATT,
+                native_unit_of_measurement=UnitOfPower.WATT,
                 state_class=SensorStateClass.MEASUREMENT,
                 name="Power",
             )
@@ -222,7 +292,7 @@ class BtMeshSensor_PresentInputCurrent(BtMeshSensorEntity):
             SensorEntityDescription(
                 key="present_input_current",
                 device_class=SensorDeviceClass.CURRENT,
-                native_unit_of_measurement=ELECTRIC_CURRENT_AMPERE,
+                native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
                 state_class=SensorStateClass.MEASUREMENT,
                 name="Current",
             )
@@ -257,7 +327,7 @@ class BtMeshSensor_PreciseTotalDeviceEnergyUse(BtMeshSensorEntity):
             SensorEntityDescription(
                 key="totalenergy",
                 device_class=SensorDeviceClass.ENERGY,
-                native_unit_of_measurement=ENERGY_KILO_WATT_HOUR,
+                native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
                 state_class=SensorStateClass.TOTAL_INCREASING,
                 name="Total Energy",
             )
@@ -293,7 +363,7 @@ class BtMeshSensor_PresentInputVoltage(BtMeshSensorEntity):
             SensorEntityDescription(
                 key="present_input_voltage",
                 device_class=SensorDeviceClass.VOLTAGE,
-                native_unit_of_measurement=ELECTRIC_POTENTIAL_VOLT,
+                native_unit_of_measurement=UnitOfElectricPotential.VOLT,
                 state_class=SensorStateClass.MEASUREMENT,
                 name="Voltage",
             )

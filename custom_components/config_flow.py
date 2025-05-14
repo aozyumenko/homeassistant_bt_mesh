@@ -14,7 +14,7 @@ from .const import (
     CONF_MESH_CFGCLIENT_CONFIG_PATH,
     DEFAULT_MESH_JOIN_TIMEOUT
 )
-from .bt_mesh import BtMeshApplication
+from .bt_mesh.application import BtMeshApplication
 
 import logging
 _LOGGER = logging.getLogger(__name__)
