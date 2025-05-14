@@ -117,8 +117,6 @@ async def async_setup_entry(
     return True
 
 
-
-
 class BtMeshLight_LightLightness(BtMeshEntity, LightEntity):
     """Representation of a BT Mesh LightLightness."""
 

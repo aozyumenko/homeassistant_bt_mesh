@@ -346,7 +346,6 @@ class BtMeshSensor_PreciseTotalDeviceEnergyUse(BtMeshSensorEntity):
         self._attr_native_value = await self.sensor_get()
 
 
-
 class BtMeshSensor_PresentInputVoltage(BtMeshSensorEntity):
     """..."""
 
@@ -380,7 +379,6 @@ class BtMeshSensor_PresentInputVoltage(BtMeshSensorEntity):
     async def async_update(self) -> None:
         """Fetch new state data for the sensor."""
         self._attr_native_value = await self.sensor_get()
-
 
 
 SENSOR_CLASSES = {
