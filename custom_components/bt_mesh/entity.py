@@ -1,79 +1,44 @@
+from bluetooth_numbers import company
+from .product import product
+
 from homeassistant.helpers.entity import Entity, DeviceInfo
 
 from . import BtMeshModelId
 from .application import BtMeshApplication
+from .mesh_cfgclient_conf import MeshCfgModel
 
-from ..const import (
-    DOMAIN,     # TODO: change const to init argument
-)
+from ..const import DOMAIN
+
+
+#import logging
+#_LOGGER = logging.getLogger(__name__)
+
 
 
 class BtMeshEntity(Entity):
     """Basic representation of a BT Mesh service."""
+    app: BtMeshApplication
+    cfg_model: MeshCfgModel
 
-    _application: BtMeshApplication
-    _state_cache: dict or None
-
-    def __init__(self, application, uuid, cid, pid, vid, addr, model_id, app_index):
+    def __init__(self, app: BtMeshApplication, cfg_model: MeshCfgModel) -> None:
         """Initialize the device."""
-        self._application = application
-        self._unicast_addr = addr
-        self._model_id = model_id
-        self._app_index = app_index
-
-        self.uuid: str = uuid
-        self.cid: int = cid
-        self.pid: int = pid
-        self.vid: int = vid
-        self.product: str = "0x%04x" % (self.pid)
-        self.company: str = "0x%04x" % (self.cid)
-
-        self._attr_name = "%04x-%s" % (self._unicast_addr, BtMeshModelId.get_name(model_id))
-        self._attr_unique_id = "%04x-%04x-%s" % (self._unicast_addr, self._model_id, uuid)
+        self.app = app
+        self.cfg_model = cfg_model
 
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, self.uuid)},
-            name=self.uuid,
-            model=self.product,
-            manufacturer=self.company,
-            sw_version=("0x%04x") % self.vid,
+            identifiers={(DOMAIN, str(self.cfg_model.device.uuid))},
+            manufacturer=company[self.cfg_model.device.cid] \
+                if self.cfg_model.device.cid in company \
+                    else f"{self.cfg_model.device.cid:04x}",
+            model=product[self.cfg_model.device.pid] \
+                if self.cfg_model.device.pid in product \
+                    else f"{self.cfg_model.device.pid:04x}",
+            model_id=f"{self.cfg_model.device.pid:04x}",
+            sw_version=f"{self.cfg_model.device.vid:04x}",
         )
+        self._attr_unique_id = f"{self.cfg_model.unicast_addr:04x}-{self.cfg_model.model_id:04x}-{str(self.cfg_model.device.uuid)}"
+        self._attr_name = f"{self.cfg_model.unicast_addr:04x}-{BtMeshModelId.get_name(self.cfg_model.model_id)}"
 
-        self._state_cache = None;
-
-
-    @property
-    def unicast_addr(self):
-        """Return the unicast address of the node."""
-        return self._unicast_addr
-
-    @property
-    def model_id(self):
-        """Return the Model Id."""
-        return self._model_id
-
-    @property
-    def app_index(self):
-        """Return the application key index of the model."""
-        return self._app_index
-
-    @property
-    def application(self):
-        """Return the BT Mesh Client application."""
-        return self._application
-
-
-    # state cache
-    def cache_update(self, state: dict):
-        self._state_cache = { 'last_update': time.time(), 'state': state }
-
-    def cache_get(self) -> dict or None:
-        if self._state_cache is None:
-            return None
-        elif (self._state_cache['last_update'] + G_MESH_CACHE_INVALIDATE_TIMEOUT) < time.time():
-            self._state_cache = None
-            return None
-        else:
-            return self._state_cache['state']
-
-    # BT Mesh Application interface
+#        _LOGGER.debug(self._attr_device_info)
+#        _LOGGER.debug(self._attr_unique_id)
+#        _LOGGER.debug(self._attr_name)
