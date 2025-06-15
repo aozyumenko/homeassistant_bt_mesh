@@ -244,7 +244,7 @@ class BtMeshApplication(Application, TimeServerMixin):
         super()._register()
 
         self.sensor_init_receive_status()
-        #self.generic_battery_init_receive_status()
+        self.generic_battery_init_receive_status()
 
 
     ##################################################
@@ -499,29 +499,27 @@ class BtMeshApplication(Application, TimeServerMixin):
 
 
     # Sensor
-
     def sensor_init_receive_status(self) -> None:
         client = self.elements[0][SensorClient]
         client.app_message_callbacks[SensorOpcode.SENSOR_DESCRIPTOR_STATUS].add(self.cache.receive_message)
         client.app_message_callbacks[SensorOpcode.SENSOR_STATUS].add(self.cache.receive_message)
 
+
     async def sensor_descriptor_get(self, address, app_index) -> Container | None:
         client = self.elements[0][SensorClient]
-        (cache_valid, cache_result) = self.cache.get(address, SensorOpcode.SENSOR_DESCRIPTOR_STATUS)
-        request_result = None
+        (cache_valid, result) = self.cache.get(address, SensorOpcode.SENSOR_DESCRIPTOR_STATUS)
         if not cache_valid:
             try:
-                request_result = await client.descriptor_get(
+                result = await client.descriptor_get(
                     address,
                     app_index=app_index,
                     send_interval=G_SEND_INTERVAL,
                     timeout=G_TIMEOUT)
             except Exception as e:
                 pass
-        #result = request_result if request_result else cache_result
         #_LOGGER.debug("sensor_descriptor_get() result = %s" % (repr(result)))
-        #return result
-        return request_result if request_result else cache_result
+        return result
+
 
     async def sensor_get(self, address, app_index, property_id) -> Container | None:
         client = self.elements[0][SensorClient]
@@ -540,42 +538,32 @@ class BtMeshApplication(Application, TimeServerMixin):
         if result:
             for property in result:
                 if property_id == property.sensor_setting_property_id:
-                    _LOGGER.debug("sensor_get() property=%s" % (repr(property)))
+#                    _LOGGER.debug("sensor_get() property=%s" % (repr(property)))
                     return property
-        _LOGGER.debug("sensor_get() None")
+#        _LOGGER.debug("sensor_get() None")
         return None
 
 
     # Generic Battery
-#    def generic_battery_init_receive_status(self) -> None:
-#        def receive_status(
-#            _source: int,
-#            _app_index: int,
-#            _destination: Union[int, UUID],
-#            message: ParsedMeshMessage,
-#        ):
-#            self.cache_update(
-#                _source,
-#                BtMeshModelId.GenericBatteryServer,
-#                message.generic_battery_status
-#            )
+    def generic_battery_init_receive_status(self) -> None:
+        client = self.elements[0][GenericBatteryClient]
+        client.app_message_callbacks[GenericBatteryOpcode.GENERIC_BATTERY_STATUS].add(self.cache.receive_message)
 
-#        client = self.elements[0][GenericBatteryClient]
-#        client.app_message_callbacks[GenericBatteryOpcode.GENERIC_BATTERY_STATUS].add(receive_status)
 
-#    async def generic_battery_get(self, address, app_index) -> Container | None:
-#        """Get GenericBattery state"""
-#        client = self.elements[0][GenericBatteryClient]
-#        return await self.cache_proxy(
-#            address,
-#            BtMeshModelId.GenericBatteryServer,
-#            client.get(
-#                [address],
-#                app_index=app_index,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT,
-#            )
-#        )
+    async def generic_battery_get(self, address, app_index) -> Container | None:
+        """Get GenericBattery state"""
+        client = self.elements[0][GenericBatteryClient]
+        (cache_valid, result) = self.cache.get(address, GenericBatteryOpcode.GENERIC_BATTERY_STATUS)
+        if not cache_valid:
+            try:
+                result = await client.get(
+                    address,
+                    app_index=app_index,
+                    send_interval=G_SEND_INTERVAL,
+                    timeout=G_TIMEOUT)
+            except Exception as e:
+                pass
+        return result
 
 
     # Vendor Thermostat

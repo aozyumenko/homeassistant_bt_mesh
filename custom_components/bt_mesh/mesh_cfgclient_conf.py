@@ -446,7 +446,7 @@ class MeshCfgclientConf:
         return cfg_devices
 
 
-    def get_models(self, model_id: BtMeshModelId) -> list:
+    def get_models(self) -> list:
         models = []
         for device_item in self.devices:
             device_id = device_item[JSON_UUID]
@@ -464,25 +464,29 @@ class MeshCfgclientConf:
             )
 
             for model_items_id, model_items in device_item[JSON_MODELS].items():
-                if model_items_id == model_id:
-                    for element_item in model_items:
-                        extends = {key: MeshCfgModelExtend(
-                            name=key,
-                            unicast_addr=device_unicast_addr+val,
-                            app_key=device_item[JSON_APP_KEYS][val][model_items_id]
-                                if val in device_item[JSON_APP_KEYS]
-                                    and model_items_id in device_item[JSON_APP_KEYS][val] else None
-                        ) for key, val in element_item.items()}
+                for element_item in model_items:
+                    extends = {key: MeshCfgModelExtend(
+                        name=key,
+                        unicast_addr=device_unicast_addr+val,
+                        app_key=device_item[JSON_APP_KEYS][val][model_items_id]
+                            if val in device_item[JSON_APP_KEYS]
+                                and model_items_id in device_item[JSON_APP_KEYS][val] else None
+                    ) for key, val in element_item.items()}
 
-                        if extends[PATTERN_MAIN].app_key is not None:
-                            mesh_cfg_model = MeshCfgModel(
-                                device=cfg_device,
-                                model_id=model_items_id,
-                                unicast_addr=extends[PATTERN_MAIN].unicast_addr,
-                                app_key=extends[PATTERN_MAIN].app_key,
-                                extends={key: val for key, val in extends.items()
-                                    if key != PATTERN_MAIN and val.app_key is not None}
-                            )
+                    if extends[PATTERN_MAIN].app_key is not None:
+                        mesh_cfg_model = MeshCfgModel(
+                            device=cfg_device,
+                            model_id=model_items_id,
+                            unicast_addr=extends[PATTERN_MAIN].unicast_addr,
+                            app_key=extends[PATTERN_MAIN].app_key,
+                            extends={key: val for key, val in extends.items()
+                                if key != PATTERN_MAIN and val.app_key is not None}
+                        )
 
-                            models.append(mesh_cfg_model)
+                        models.append(mesh_cfg_model)
+
         return models
+
+
+    def get_models_by_model_id(self, model_id: BtMeshModelId) -> list:
+        return [model for model in self.get_models() if  model.model_id == model_id]
