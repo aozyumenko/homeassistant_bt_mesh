@@ -7,11 +7,14 @@ from homeassistant.const import Platform
 
 DOMAIN: Final = "bt_mesh"
 PLATFORMS: Final = (
-    Platform.SWITCH,
+#    Platform.SWITCH,
     Platform.SENSOR,
-    Platform.LIGHT,
-    Platform.CLIMATE,
+#    Platform.LIGHT,
+#    Platform.CLIMATE,
 )
+
+
+BT_MESH_DISCOVERY_ENTITY_NEW = "bt_mesh_discovery_entity_new.{}"
 
 
 # domain data keys
@@ -33,8 +36,10 @@ DEFAULT_MESH_JOIN_TIMEOUT = 120
 
 
 # Mesh application config
-G_TIMEOUT = 3.0
-G_SEND_INTERVAL = 0.5
+#G_TIMEOUT = 3.0
+#G_SEND_INTERVAL = 0.5
+G_TIMEOUT = 0.15
+G_SEND_INTERVAL = 0.05
 G_UNACK_RETRANSMISSIONS = 3
 G_UNACK_INTERVAL = 0.05
 G_MESH_SENSOR_CACHE_TIMEOUT = 60
