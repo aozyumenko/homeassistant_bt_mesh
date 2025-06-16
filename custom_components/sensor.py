@@ -1,7 +1,8 @@
 """BT MESH sensor integration"""
 from __future__ import annotations
 
-#import asyncio
+from bluetooth_mesh.messages.properties import PropertyID
+from bluetooth_mesh.messages.sensor import SensorOpcode
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -23,12 +24,10 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.const import Platform
 
-from bluetooth_mesh.messages.properties import PropertyID
-
 from .bt_mesh.mesh_cfgclient_conf import MeshCfgModel
 from .bt_mesh.entity import BtMeshEntity
 from .bt_mesh import BtMeshModelId, BtSensorAttrPropertyId
-from .const import DOMAIN, BT_MESH_APPLICATION, BT_MESH_DISCOVERY_ENTITY_NEW
+from .const import DOMAIN, BT_MESH_DISCOVERY_ENTITY_NEW
 
 import logging
 _LOGGER = logging.getLogger(__name__)
@@ -49,7 +48,6 @@ async def async_setup_entry(
         property_id: PropertyID,
         update_period: int
     ) -> None:
-#        _LOGGER.debug("async_add_sensor(): uuid=%s, addr=0x%04x, app_key=%d, property_id=0x%x, update_period=%d" % (cfg_model.device.uuid, cfg_model.unicast_addr, cfg_model.app_key, property_id, update_period))
         try:
             sensor_entity = BtMeshSensorEntityFactory.get(property_id)(
                 app,
@@ -57,9 +55,8 @@ async def async_setup_entry(
                 update_period
             )
             async_add_entities([sensor_entity])
-#            _LOGGER.debug(f"sensor_entity = {sensor_entity}")
         except Exception as e:
-#            _LOGGER.debug(f"failed to create BtMeshSensorEntity: {e}")
+            _LOGGER.error(f"failed to create BtMeshSensorEntity: {e}")
             pass
 
 
@@ -68,7 +65,6 @@ async def async_setup_entry(
         app: BtMeshApplication,
         cfg_model: MeshCfgModel
     ) -> None:
-        _LOGGER.debug("async_add_generic_battery(): uuid=%s, addr=0x%04x, app_key=%d" % (cfg_model.device.uuid, cfg_model.unicast_addr, cfg_model.app_key))
         async_add_entities([BtMeshGenericBatteryEntity(app, cfg_model)])
 
 
@@ -143,21 +139,21 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
             raise ValueError("cfg_model.model_id must be SensorServer")
 
         BtMeshEntity.__init__(self, app, cfg_model)
-        self.update_period = update_period
 
         # update sensor unique_id and name attributes
         self._attr_unique_id = f"{self.cfg_model.unicast_addr:04x}-{self.cfg_model.model_id:04x}-{self.property_id}-{str(self.cfg_model.device.uuid)}"
         self._attr_name = f"{self.cfg_model.unicast_addr:04x}-{BtMeshModelId.get_name(self.cfg_model.model_id)}-{BtSensorAttrPropertyId.get_name(self.property_id)}"
-
         self._attr_available = False
 
-#        _LOGGER.debug(self._attr_unique_id)
-#        _LOGGER.debug(self._attr_name)
-
+        self.update_period = update_period
+        self.app.cache.set_update_timeout(
+            cfg_model.unicast_addr,
+            SensorOpcode.SENSOR_STATUS,
+            self.update_period
+        )
 
     async def _sensor_get(self):
         """Get sensor value."""
-#        _LOGGER.debug("BtMeshSensor: _sensor_get()")
         return await self.app.sensor_get(
             self.cfg_model.unicast_addr,
             self.cfg_model.app_key,
@@ -170,15 +166,13 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
             prop = await self._sensor_get()
             for key in self.argument_keys:
                 prop = prop[key]
-#            _LOGGER.debug(f"BtMeshSensor: prop={prop}")
             return round(float(prop), self.argument_round)
         except Exception as e:
-            _LOGGER.debug(f"BtMeshSensor: _sensor_get(): {e}")
+            _LOGGER.error(f"BtMeshSensor: _sensor_get(): {e}")
             return None
 
     async def async_update(self) -> None:
         """Fetch new state data for the sensor."""
-#        _LOGGER.debug("BtMeshSensor: async_update()")
         self._attr_native_value = await self.sensor_get()
         self._attr_available = self._attr_native_value is not None
 

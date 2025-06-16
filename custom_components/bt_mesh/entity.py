@@ -36,8 +36,8 @@ class BtMeshEntity(Entity):
             model_id=f"{self.cfg_model.device.pid:04x}",
             sw_version=f"{self.cfg_model.device.vid:04x}",
         )
-        self._attr_unique_id = f"{self.cfg_model.unicast_addr:04x}-{self.cfg_model.model_id:04x}-{str(self.cfg_model.device.uuid)}"
-        self._attr_name = f"{self.cfg_model.unicast_addr:04x}-{BtMeshModelId.get_name(self.cfg_model.model_id)}"
+        self._attr_unique_id = self.cfg_model.unique_id
+        self._attr_name = self.cfg_model.name
 
 #        _LOGGER.debug(self._attr_device_info)
 #        _LOGGER.debug(self._attr_unique_id)

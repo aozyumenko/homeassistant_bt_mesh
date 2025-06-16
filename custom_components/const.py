@@ -21,6 +21,7 @@ BT_MESH_DISCOVERY_ENTITY_NEW = "bt_mesh_discovery_entity_new.{}"
 BT_MESH_CONFIG: Final = "config"
 BT_MESH_APPLICATION: Final = "application"
 BT_MESH_CFGCLIENT_CONF: Final = "mesh_cfgclient_conf"
+BT_MESH_ALREADY_DISCOVERED: Final = "bt_mesh_already_discovered"
 
 
 # config keys

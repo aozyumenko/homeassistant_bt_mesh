@@ -91,16 +91,35 @@ class SimpleTokenRing:
 
 class BtMeshCache:
     _cache: dict
+    _update_timeout: dict
 
     def __init__(self):
         self._cache = dict()
+        self._update_timeout = dict()
 
     @staticmethod
     def key(opcode, extra_key=None) -> str:
         return "%x_%s" % (opcode, str(extra_key)) if extra_key is not None else "%x" % (opcode)
 
+    @staticmethod
+    def full_key(address, opcode, extra_key=None) -> str:
+        return f"{address:x}_{BtMeshCache.key(opcode, extra_key)}"
+
+    def set_update_timeout(self, address, opcode, update_timeout, extra_key=None) -> None:
+        key = BtMeshCache.full_key(address, opcode, extra_key)
+        self._update_timeout[key] = update_timeout
+
+    def get_update_timeout(self, address, opcode, update_timeout, extra_key=None) -> int:
+        key = BtMeshCache.full_key(address, opcode, extra_key)
+        _LOGGER.debug(f"get_update_timeout(): key={key}")
+        return max(
+            self._update_timeout.get(key, G_MESH_CACHE_UPDATE_TIMEOUT),
+            G_MESH_CACHE_UPDATE_TIMEOUT
+        )
 
     def get(self, address, opcode, extra_key=None) -> (bool, any):
+        update_timeout = self.get_update_timeout(address, opcode, extra_key)
+        _LOGGER.debug(f"cache_get(): update_timeout={update_timeout}")
         if address in self._cache:
             line_address = self._cache[address]
             key = BtMeshCache.key(opcode, extra_key)
@@ -110,7 +129,7 @@ class BtMeshCache:
                         'last_update' in line and \
                         'data' in line and \
                         (line['last_update'] + G_MESH_CACHE_INVALIDATE_TIMEOUT) >= time.time():
-                    valid = (line['last_update'] + G_MESH_CACHE_UPDATE_TIMEOUT) >= time.time()
+                    valid = (line['last_update'] + update_timeout) >= time.time()
 #                    _LOGGER.debug("cache_get[%04x]: all Ok" % (address))
                     return (valid, line['data'])
 #                else:
@@ -126,20 +145,24 @@ class BtMeshCache:
         if not address in self._cache:
             self._cache[address] = dict()
         key = BtMeshCache.key(opcode, extra_key)
-        self._cache[address][key] = { 'last_update': time.time(), 'data': data }
+        self._cache[address][key] = { 'last_update': time.time(), 'opcode': opcode, 'data': data }
 #        _LOGGER.debug("cache_update[%04x]: key=%s, %s" % (address, key, repr(data)))
 
     def invalidate(self, address, opcode, extra_key=None):
         if opcode is None:
             if address in  self._cache:
                 for key, line in self._cache[address].items():
-                    line['last_update'] =  time.time() - G_MESH_CACHE_UPDATE_TIMEOUT;
+                    update_timeout = self.get_update_timeout(address, line['opcode'], extra_key)
+                    _LOGGER.debug(f"cache_invalidate(): update_timeout={update_timeout}")
+                    line['last_update'] =  time.time() - update_timeout;
 #                    _LOGGER.debug("cache_invalidate2[%04x]: key=%s" % (address, key))
         else:
             key = BtMeshCache.key(opcode, extra_key)
+            update_timeout = self.get_update_timeout(address, opcode, extra_key)
+            _LOGGER.debug(f"cache_invalidate(): update_timeout={update_timeout}")
             if address in self._cache and key in self._cache[address]:
                 line = self._cache[address][key]
-                line['last_update'] =  time.time() - G_MESH_CACHE_UPDATE_TIMEOUT;
+                line['last_update'] =  time.time() - update_timeout;
 #                _LOGGER.debug("cache_invalidate2[%04x]: key=%s" % (address, key))
 
     def update_and_invalidate(self, address, opcode, data, extra_key=None):
@@ -147,11 +170,15 @@ class BtMeshCache:
             self._cache[address] = dict()
 
         for key, line in self._cache[address].items():
+            update_timeout = self.get_update_timeout(address, line['opcode'], extra_key)
+            _LOGGER.debug(f"cache_update_and_invalidate(): update_timeout={update_timeout}")
             line['last_update'] = time.time() - G_MESH_CACHE_UPDATE_TIMEOUT;
 #            _LOGGER.debug("cache_update_and_invalidate[%04x]: key=%s" % (address, key))
 
         key = BtMeshCache.key(opcode, extra_key)
-        self._cache[address][key] = { 'last_update': time.time() - G_MESH_CACHE_UPDATE_TIMEOUT, 'data': data }
+        update_timeout = self.get_update_timeout(address, opcode, extra_key)
+        _LOGGER.debug(f"cache_update_and_invalidate(): update_timeout={update_timeout}")
+        self._cache[address][key] = { 'last_update': time.time() - update_timeout, 'data': data }
 #        _LOGGER.debug("cache_update_and_invalidate[%04x]: key=%s, %s" % (address, key, repr(data)))
 
     def receive_message(
@@ -242,6 +269,9 @@ class BtMeshApplication(Application, TimeServerMixin):
 
     def _register(self):
         super()._register()
+
+        # start Time Server
+        self.time_server_init()
 
         self.sensor_init_receive_status()
         self.generic_battery_init_receive_status()
