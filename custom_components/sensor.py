@@ -4,6 +4,10 @@ from __future__ import annotations
 from bluetooth_mesh.messages.properties import PropertyID
 from bluetooth_mesh.messages.sensor import SensorOpcode
 
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.typing import ConfigType
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -18,11 +22,8 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfPower,
     UnitOfTemperature,
+    Platform,
 )
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.typing import ConfigType
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.const import Platform
 
 from .bt_mesh.mesh_cfgclient_conf import MeshCfgModel
 from .bt_mesh.entity import BtMeshEntity

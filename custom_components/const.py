@@ -7,9 +7,9 @@ from homeassistant.const import Platform
 
 DOMAIN: Final = "bt_mesh"
 PLATFORMS: Final = (
-#    Platform.SWITCH,
-    Platform.SENSOR,
+    Platform.SWITCH,
 #    Platform.LIGHT,
+    Platform.SENSOR,
 #    Platform.CLIMATE,
 )
 

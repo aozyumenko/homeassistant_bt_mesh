@@ -111,7 +111,7 @@ class BtMeshCache:
 
     def get_update_timeout(self, address, opcode, update_timeout, extra_key=None) -> int:
         key = BtMeshCache.full_key(address, opcode, extra_key)
-        _LOGGER.debug(f"get_update_timeout(): key={key}")
+#        _LOGGER.debug(f"get_update_timeout(): key={key}")
         return max(
             self._update_timeout.get(key, G_MESH_CACHE_UPDATE_TIMEOUT),
             G_MESH_CACHE_UPDATE_TIMEOUT
@@ -119,7 +119,7 @@ class BtMeshCache:
 
     def get(self, address, opcode, extra_key=None) -> (bool, any):
         update_timeout = self.get_update_timeout(address, opcode, extra_key)
-        _LOGGER.debug(f"cache_get(): update_timeout={update_timeout}")
+#        _LOGGER.debug(f"cache_get(): update_timeout={update_timeout}")
         if address in self._cache:
             line_address = self._cache[address]
             key = BtMeshCache.key(opcode, extra_key)
@@ -153,13 +153,13 @@ class BtMeshCache:
             if address in  self._cache:
                 for key, line in self._cache[address].items():
                     update_timeout = self.get_update_timeout(address, line['opcode'], extra_key)
-                    _LOGGER.debug(f"cache_invalidate(): update_timeout={update_timeout}")
+#                    _LOGGER.debug(f"cache_invalidate(): update_timeout={update_timeout}")
                     line['last_update'] =  time.time() - update_timeout;
 #                    _LOGGER.debug("cache_invalidate2[%04x]: key=%s" % (address, key))
         else:
             key = BtMeshCache.key(opcode, extra_key)
             update_timeout = self.get_update_timeout(address, opcode, extra_key)
-            _LOGGER.debug(f"cache_invalidate(): update_timeout={update_timeout}")
+#            _LOGGER.debug(f"cache_invalidate(): update_timeout={update_timeout}")
             if address in self._cache and key in self._cache[address]:
                 line = self._cache[address][key]
                 line['last_update'] =  time.time() - update_timeout;
@@ -171,13 +171,13 @@ class BtMeshCache:
 
         for key, line in self._cache[address].items():
             update_timeout = self.get_update_timeout(address, line['opcode'], extra_key)
-            _LOGGER.debug(f"cache_update_and_invalidate(): update_timeout={update_timeout}")
+#            _LOGGER.debug(f"cache_update_and_invalidate(): update_timeout={update_timeout}")
             line['last_update'] = time.time() - G_MESH_CACHE_UPDATE_TIMEOUT;
 #            _LOGGER.debug("cache_update_and_invalidate[%04x]: key=%s" % (address, key))
 
         key = BtMeshCache.key(opcode, extra_key)
         update_timeout = self.get_update_timeout(address, opcode, extra_key)
-        _LOGGER.debug(f"cache_update_and_invalidate(): update_timeout={update_timeout}")
+#        _LOGGER.debug(f"cache_update_and_invalidate(): update_timeout={update_timeout}")
         self._cache[address][key] = { 'last_update': time.time() - update_timeout, 'data': data }
 #        _LOGGER.debug("cache_update_and_invalidate[%04x]: key=%s, %s" % (address, key, repr(data)))
 
@@ -273,6 +273,8 @@ class BtMeshApplication(Application, TimeServerMixin):
         # start Time Server
         self.time_server_init()
 
+        # cache will automatically take values from the Network
+        self.generic_onoff_init_receive_status()
         self.sensor_init_receive_status()
         self.generic_battery_init_receive_status()
 
@@ -294,59 +296,47 @@ class BtMeshApplication(Application, TimeServerMixin):
 
 
     # Switch
-#    def generic_onoff_init_receive_status(self) -> None:
-#        def receive_status(
-#            _source: int,
-#            _app_index: int,
-#            _destination: Union[int, UUID],
-#            message: ParsedMeshMessage,
-#        ):
-#            self.cache_update(
-#                _source,
-#                BtMeshModelId.GenericOnOffServer,
-#                message.generic_onoff_status
-#            )
+    def generic_onoff_init_receive_status(self) -> None:
+        client = self.elements[0][GenericOnOffClient]
+        client.app_message_callbacks[GenericOnOffOpcode.GENERIC_ONOFF_STATUS].add(self.cache.receive_message)
 
-#        client = self.elements[0][GenericOnOffClient]
-#        client.app_message_callbacks[GenericOnOffOpcode.GENERIC_ONOFF_STATUS].add(receive_status)
+    async def generic_onoff_get(self, address, app_index) -> Container | None:
+        """Get GenericOnOff state"""
+        _LOGGER.debug("Get GenericOnOff state on %04x" % (address))
+        client = self.elements[0][GenericOnOffClient]
+        (cache_valid, result) = self.cache.get(address, GenericOnOffOpcode.GENERIC_ONOFF_STATUS);
+        if not cache_valid:
+            try:
+                result = await client.get(
+                    address,
+                    app_index=app_index,
+                    send_interval=G_SEND_INTERVAL,
+                    timeout=G_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                pass
+        _LOGGER.debug("Get GenericOnOff state %04x: result %s [%f]" % (address, repr(result), time.time()))
+        return result;
 
-#    async def generic_onoff_get(self, address, app_index) -> Container | None:
-#        """Get GenericOnOff state"""
-        #_LOGGER.debug("Get GenericOnOff state on %04x" % (address))
-#        client = self.elements[0][GenericOnOffClient]
-#        (cache_valid, cache_result) = self.cache_get(address, BtMeshModelId.GenericOnOffServer);
-#        if not cache_valid:
-#            try:
-#                request_result = await client.get2(
-#                    address,
-#                    app_index=app_index,
-#                    send_interval=G_SEND_INTERVAL,
-#                    timeout=G_TIMEOUT,
-#                )
-#            except Exception as e:
-#                request_result = None
-#        result = request_result if request_result is not None else cache_result
-#        _LOGGER.debug("Get GenericOnOff state %04x: result %s [%f]" % (address, repr(result), time.time()))
-#        return result;
-
-
-#    async def generic_onoff_set(self, address, app_index, state) -> None:
-#        """Set GenericOnOff state"""
-#        _LOGGER.debug("Set GenericOnOff state %04x: result %s" % (address, repr(state)))
-#        client = self.elements[0][GenericOnOffClient]
-#        async with self._lock:
-#            await client.set(
-#                [address],
-#                app_index=app_index,
-#                onoff=state,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT
-#            )
-#        self.cache_update_and_invalidate(
-#            address,
-#            BtMeshModelId.GenericOnOffServer,
-#            Container(present_onoff=1 if state else 0)
-#        )
+    async def generic_onoff_set(self, address, app_index, state) -> None:
+        """Set GenericOnOff state"""
+        _LOGGER.debug("Set GenericOnOff state %04x: result %s" % (address, repr(state)))
+        try:
+            client = self.elements[0][GenericOnOffClient]
+            await client.set(
+                address,
+                app_index=app_index,
+                onoff=state,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT,
+            )
+            self.cache.update_and_invalidate(
+                address,
+                GenericOnOffOpcode.GENERIC_ONOFF_STATUS,
+                Container(present_onoff=1 if state else 0)
+            )
+        except asyncio.TimeoutError:
+            pass
 
     # LightLightness
 #    def light_lightness_init_receive_status(self) -> None:
@@ -545,7 +535,7 @@ class BtMeshApplication(Application, TimeServerMixin):
                     app_index=app_index,
                     send_interval=G_SEND_INTERVAL,
                     timeout=G_TIMEOUT)
-            except Exception as e:
+            except asyncio.TimeoutError:
                 pass
         #_LOGGER.debug("sensor_descriptor_get() result = %s" % (repr(result)))
         return result
@@ -562,8 +552,7 @@ class BtMeshApplication(Application, TimeServerMixin):
                     send_interval=G_SEND_INTERVAL,
                     timeout=G_TIMEOUT,
                 )
-                result = request_result
-            except Exception as e:
+            except asyncio.TimeoutError:
                 pass
         if result:
             for property in result:
@@ -591,7 +580,7 @@ class BtMeshApplication(Application, TimeServerMixin):
                     app_index=app_index,
                     send_interval=G_SEND_INTERVAL,
                     timeout=G_TIMEOUT)
-            except Exception as e:
+            except asyncio.TimeoutError:
                 pass
         return result
 
