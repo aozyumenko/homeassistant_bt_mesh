@@ -78,26 +78,23 @@ MeshNodePatterns: Final = {
         },
         PATTERN_PRIORITY: 0
     },
-    BtMeshModelId.LightLightnessSetupServer: {
+    BtMeshModelId.LightLightnessServer: {
         PATTERN_ELEMENTS: {
             PATTERN_MAIN: [
                 BtMeshModelId.GenericOnOffServer,
                 BtMeshModelId.GenericLevelServer,
                 BtMeshModelId.LightLightnessServer,
-                BtMeshModelId.LightLightnessSetupServer
             ]
         },
         PATTERN_PRIORITY: 1
     },
-    BtMeshModelId.LightCTLSetupServer: {
+    BtMeshModelId.LightCTLServer: {
         PATTERN_ELEMENTS: {
             PATTERN_MAIN: [
                 BtMeshModelId.GenericOnOffServer,
                 BtMeshModelId.GenericLevelServer,
                 BtMeshModelId.LightLightnessServer,
-                BtMeshModelId.LightLightnessSetupServer,
                 BtMeshModelId.LightCTLServer,
-                BtMeshModelId.LightCTLSetupServer
             ],
             PATTERN_TEMPERATURE: [
                 BtMeshModelId.GenericLevelServer,
@@ -106,15 +103,13 @@ MeshNodePatterns: Final = {
         },
         PATTERN_PRIORITY: 0
     },
-    BtMeshModelId.LightHSLSetupServer: {
+    BtMeshModelId.LightHSLServer: {
         PATTERN_ELEMENTS: {
             PATTERN_MAIN: [
                 BtMeshModelId.GenericOnOffServer,
                 BtMeshModelId.GenericLevelServer,
                 BtMeshModelId.LightLightnessServer,
-                BtMeshModelId.LightLightnessSetupServer,
                 BtMeshModelId.LightHSLServer,
-                BtMeshModelId.LightHSLSetupServer
             ],
             PATTERN_HUE: [
                 BtMeshModelId.GenericLevelServer,
@@ -158,6 +153,15 @@ class MeshCfgDevice:
     friend: bool
     low_power: bool
 
+    @property
+    def name(self) -> str:
+        return f"{self.unicast_addr:04x}"
+
+    @property
+    def unique_id(self) -> str:
+        return f"{str(self.uuid)}"
+        #return f"{self.unicast_addr:04x}-{str(self.uuid)}"
+
 
 @dataclass
 class MeshCfgModelExtend:
@@ -176,11 +180,11 @@ class MeshCfgModel:
 
     @property
     def name(self) -> str:
-        return "%04x-%s" % (self.unicast_addr, BtMeshModelId.get_name(self.model_id))
+        return f"{self.unicast_addr:04x}-{BtMeshModelId.get_name(self.model_id)}"
 
     @property
     def unique_id(self) -> str:
-        return "%04x-%04x-%s" % (self.unicast_addr, self.model_id, self.device_id)
+        return f"{self.unicast_addr:04x}-{self.model_id:04x}-{str(self.device.uuid)}"
 
 
 
@@ -421,6 +425,7 @@ class MeshCfgclientConf:
 
     def load(self) -> dict:
         conf_file = Path(self.filename)
+        self.last_mtime = conf_file.stat().st_mtime
         conf_data = json.loads(conf_file.read_text(encoding="utf8"))
         self.devices = self._parse(conf_data)
         return self.devices

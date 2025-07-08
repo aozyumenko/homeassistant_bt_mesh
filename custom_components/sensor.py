@@ -26,7 +26,7 @@ from homeassistant.const import (
 )
 
 from .bt_mesh.mesh_cfgclient_conf import MeshCfgModel
-from .bt_mesh.entity import BtMeshEntity
+from .bt_mesh.entity import BtMeshEntity, ClassNotFoundError
 from .bt_mesh import BtMeshModelId, BtSensorAttrPropertyId
 from .const import DOMAIN, BT_MESH_DISCOVERY_ENTITY_NEW
 
@@ -47,26 +47,29 @@ async def async_setup_entry(
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
         property_id: PropertyID,
-        update_period: int
+        update_period: int,
+        passive: bool
     ) -> None:
         try:
             sensor_entity = BtMeshSensorEntityFactory.get(property_id)(
                 app,
                 cfg_model,
-                update_period
+                update_period,
+                passive
             )
             async_add_entities([sensor_entity])
-        except Exception as e:
-            _LOGGER.error(f"failed to create BtMeshSensorEntity: {e}")
+        except ClassNotFoundError as e:
+            _LOGGER.error(f"failed to create BtMeshSensorEntity {property_id:04x}: {repr(e)}")
             pass
 
 
     @callback
     def async_add_generic_battery(
         app: BtMeshApplication,
-        cfg_model: MeshCfgModel
+        cfg_model: MeshCfgModel,
+        passive: bool
     ) -> None:
-        async_add_entities([BtMeshGenericBatteryEntity(app, cfg_model)])
+        async_add_entities([BtMeshGenericBatteryEntity(app, cfg_model, passive)])
 
 
     config_entry.async_on_unload(
@@ -101,11 +104,16 @@ class BtMeshGenericBatteryEntity(BtMeshEntity, SensorEntity):
         name="Battery Level",
     )
 
-    def __init__(self, app: BtMeshApplication, cfg_model: MeshCfgModel) -> None:
+    def __init__(
+        self,
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        passive: bool
+    ) -> None:
         if cfg_model.model_id != BtMeshModelId.GenericBatteryServer:
             raise ValueError("cfg_model.model_id must be GenericBatteryServer")
 
-        BtMeshEntity.__init__(self, app, cfg_model)
+        BtMeshEntity.__init__(self, app, cfg_model, passive)
         self._attr_available = False
 
     async def async_update(self) -> None:
@@ -134,12 +142,13 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
         self,
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
-        update_period: int
+        update_period: int,
+        passive: bool
     ) -> None:
         if cfg_model.model_id != BtMeshModelId.SensorServer:
             raise ValueError("cfg_model.model_id must be SensorServer")
 
-        BtMeshEntity.__init__(self, app, cfg_model)
+        BtMeshEntity.__init__(self, app, cfg_model, passive)
 
         # update sensor unique_id and name attributes
         self._attr_unique_id = f"{self.cfg_model.unicast_addr:04x}-{self.cfg_model.model_id:04x}-{self.property_id}-{str(self.cfg_model.device.uuid)}"
@@ -158,7 +167,8 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
         return await self.app.sensor_get(
             self.cfg_model.unicast_addr,
             self.cfg_model.app_key,
-            self.property_id
+            self.property_id,
+            self.passive
         )
 
     async def sensor_get(self):
@@ -168,8 +178,10 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
             for key in self.argument_keys:
                 prop = prop[key]
             return round(float(prop), self.argument_round)
+        except TypeError:
+            pass
         except Exception as e:
-            _LOGGER.error(f"BtMeshSensor: _sensor_get(): {e}")
+            _LOGGER.error(f"BtMeshSensor: sensor_get(): {e}")
             return None
 
     async def async_update(self) -> None:
@@ -261,9 +273,57 @@ class BtMeshSensor_Precise_Present_Ambient_Temperature(BtMeshSensorEntity):
     )
     argument_keys = ["precise_present_ambient_temperature", "temperature"]
 
+class BtMeshSensor_Precise_Present_Ambient_Temperature(BtMeshSensorEntity):
+    """Ambient Temperature sensor"""
 
-class ClassNotFoundError(Exception):
-    """Factory could not find the class."""
+    property_id = PropertyID.PRECISE_PRESENT_AMBIENT_TEMPERATURE
+    entity_description = SensorEntityDescription(
+        key="precise_present_ambient_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Ambient temperatire",
+    )
+    argument_keys = ["precise_present_ambient_temperature", "temperature"]
+
+class BtMeshSensor_Present_Ambient_Relative_Humidity(BtMeshSensorEntity):
+    """Ambient Humidity sensor"""
+
+    property_id = PropertyID.PRESENT_AMBIENT_RELATIVE_HUMIDITY
+    entity_description = SensorEntityDescription(
+        key="present_ambient_relative_humidity",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Ambient humidity",
+    )
+    argument_keys = ["present_ambient_relative_humidity", "humidity"]
+
+class BtMeshSensor_Present_Indoor_Relative_Humidity(BtMeshSensorEntity):
+    """Indoor Humidity sensor"""
+
+    property_id = PropertyID.PRESENT_INDOOR_RELATIVE_HUMIDITY
+    entity_description = SensorEntityDescription(
+        key="present_indoor_relative_humidity",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Indoor humidity",
+    )
+    argument_keys = ["present_indoor_relative_humidity", "humidity"]
+
+class BtMeshSensor_Present_Outdoor_Relative_Humidity(BtMeshSensorEntity):
+    """Outdoor Humidity sensor"""
+
+    property_id = PropertyID.PRESENT_OUTDOOR_RELATIVE_HUMIDITY
+    entity_description = SensorEntityDescription(
+        key="present_outdoor_relative_humidity",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Outdoor humidity",
+    )
+    argument_keys = ["present_outdoor_relative_humidity", "humidity"]
 
 
 class BtMeshSensorEntityFactory(object):
@@ -273,9 +333,6 @@ class BtMeshSensorEntityFactory(object):
             raise ValueError("property_id must be int")
 
         raw_subclasses_ = BtMeshSensorEntity.__subclasses__()
-        print(raw_subclasses_)
-        for subclass_ in raw_subclasses_:
-            print(subclass_.property_id)
         classes: dict[int, Callable[..., object]] = {c.property_id:c for c in raw_subclasses_}
         class_ = classes.get(property_id, None)
         if class_ is not None:

@@ -10,23 +10,35 @@ from .mesh_cfgclient_conf import MeshCfgModel
 from ..const import DOMAIN
 
 
-#import logging
-#_LOGGER = logging.getLogger(__name__)
+import logging
+_LOGGER = logging.getLogger(__name__)
 
+
+class ClassNotFoundError(Exception):
+    """Factory could not find the class."""
 
 
 class BtMeshEntity(Entity):
     """Basic representation of a BT Mesh service."""
     app: BtMeshApplication
     cfg_model: MeshCfgModel
+    passive: bool
 
-    def __init__(self, app: BtMeshApplication, cfg_model: MeshCfgModel) -> None:
+    def __init__(
+        self,
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        passive: bool
+    ) -> None:
         """Initialize the device."""
         self.app = app
         self.cfg_model = cfg_model
+        self.passive = passive
 
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, str(self.cfg_model.device.uuid))},
+            identifiers={(DOMAIN, str(self.cfg_model.device.unique_id))},
+            #name=str(self.cfg_model.device.unique_id),
+            name=f"{DOMAIN}_{self.cfg_model.device.unicast_addr:04x}",
             manufacturer=company[self.cfg_model.device.cid] \
                 if self.cfg_model.device.cid in company \
                     else f"{self.cfg_model.device.cid:04x}",
@@ -39,6 +51,4 @@ class BtMeshEntity(Entity):
         self._attr_unique_id = self.cfg_model.unique_id
         self._attr_name = self.cfg_model.name
 
-#        _LOGGER.debug(self._attr_device_info)
-#        _LOGGER.debug(self._attr_unique_id)
-#        _LOGGER.debug(self._attr_name)
+        _LOGGER.debug(f"BtMeshEntity: {self._attr_device_info['name']}")

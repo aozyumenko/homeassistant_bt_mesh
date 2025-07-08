@@ -48,7 +48,6 @@ from ..const import (
     G_TIMEOUT,
     G_UNACK_RETRANSMISSIONS,
     G_UNACK_INTERVAL,
-    G_MESH_SENSOR_CACHE_TIMEOUT,
     G_MESH_CACHE_UPDATE_TIMEOUT,
     G_MESH_CACHE_INVALIDATE_TIMEOUT,
 )
@@ -119,19 +118,19 @@ class BtMeshCache:
 
     def get(self, address, opcode, extra_key=None) -> (bool, any):
         update_timeout = self.get_update_timeout(address, opcode, extra_key)
+        invalidate_timeout = G_MESH_CACHE_INVALIDATE_TIMEOUT     \
+            if G_MESH_CACHE_INVALIDATE_TIMEOUT >= update_timeout \
+                else update_timeout
 #        _LOGGER.debug(f"cache_get(): update_timeout={update_timeout}")
         if address in self._cache:
             line_address = self._cache[address]
             key = BtMeshCache.key(opcode, extra_key)
             if line_address is not None and key in line_address:
                 line = line_address[key]
-                if line is not None and \
-                        'last_update' in line and \
-                        'data' in line and \
-                        (line['last_update'] + G_MESH_CACHE_INVALIDATE_TIMEOUT) >= time.time():
-                    valid = (line['last_update'] + update_timeout) >= time.time()
+                if (line["last_update"] + invalidate_timeout) >= time.time():
+                    valid = (line["last_update"] + update_timeout) >= time.time()
 #                    _LOGGER.debug("cache_get[%04x]: all Ok" % (address))
-                    return (valid, line['data'])
+                    return (valid, line["data"])
 #                else:
 #                    _LOGGER.debug("cache_get[%04x]: line not found or expired" % (address))
 #            else:
@@ -145,16 +144,20 @@ class BtMeshCache:
         if not address in self._cache:
             self._cache[address] = dict()
         key = BtMeshCache.key(opcode, extra_key)
-        self._cache[address][key] = { 'last_update': time.time(), 'opcode': opcode, 'data': data }
+        self._cache[address][key] = {
+            "last_update": time.time(),
+            "opcode": opcode,
+            "data": data
+        }
 #        _LOGGER.debug("cache_update[%04x]: key=%s, %s" % (address, key, repr(data)))
 
     def invalidate(self, address, opcode, extra_key=None):
         if opcode is None:
             if address in  self._cache:
                 for key, line in self._cache[address].items():
-                    update_timeout = self.get_update_timeout(address, line['opcode'], extra_key)
+                    update_timeout = self.get_update_timeout(address, line["opcode"], extra_key)
 #                    _LOGGER.debug(f"cache_invalidate(): update_timeout={update_timeout}")
-                    line['last_update'] =  time.time() - update_timeout;
+                    line["last_update"] =  time.time() - update_timeout
 #                    _LOGGER.debug("cache_invalidate2[%04x]: key=%s" % (address, key))
         else:
             key = BtMeshCache.key(opcode, extra_key)
@@ -162,7 +165,7 @@ class BtMeshCache:
 #            _LOGGER.debug(f"cache_invalidate(): update_timeout={update_timeout}")
             if address in self._cache and key in self._cache[address]:
                 line = self._cache[address][key]
-                line['last_update'] =  time.time() - update_timeout;
+                line["last_update"] =  time.time() - update_timeout
 #                _LOGGER.debug("cache_invalidate2[%04x]: key=%s" % (address, key))
 
     def update_and_invalidate(self, address, opcode, data, extra_key=None):
@@ -170,15 +173,19 @@ class BtMeshCache:
             self._cache[address] = dict()
 
         for key, line in self._cache[address].items():
-            update_timeout = self.get_update_timeout(address, line['opcode'], extra_key)
+            update_timeout = self.get_update_timeout(address, line["opcode"], extra_key)
 #            _LOGGER.debug(f"cache_update_and_invalidate(): update_timeout={update_timeout}")
-            line['last_update'] = time.time() - G_MESH_CACHE_UPDATE_TIMEOUT;
+            line["last_update"] = time.time() - G_MESH_CACHE_UPDATE_TIMEOUT
 #            _LOGGER.debug("cache_update_and_invalidate[%04x]: key=%s" % (address, key))
 
         key = BtMeshCache.key(opcode, extra_key)
         update_timeout = self.get_update_timeout(address, opcode, extra_key)
 #        _LOGGER.debug(f"cache_update_and_invalidate(): update_timeout={update_timeout}")
-        self._cache[address][key] = { 'last_update': time.time() - update_timeout, 'data': data }
+        self._cache[address][key] = {
+            "last_update": time.time() - update_timeout,
+            "opcode": opcode,
+            "data": data
+        }
 #        _LOGGER.debug("cache_update_and_invalidate[%04x]: key=%s, %s" % (address, key, repr(data)))
 
     def receive_message(
@@ -188,13 +195,17 @@ class BtMeshCache:
         _destination: Union[int, UUID],
         message: ParsedMeshMessage,
     ):
-#        _LOGGER.debug("CACHE_RECEIVE_STATUS receive %04x->%04x" % (_source, _destination))
-        opcode_name = BtMeshOpcode.get(message["opcode"]).name.lower()
+        #if message.opcode == GenericOnOffOpcode.GENERIC_ONOFF_STATUS:
+        #    _LOGGER.debug("CACHE_RECEIVE_STATUS receive %04x->%04x [%f]" % (_source, _destination, time.time()))
+#        _LOGGER.debug("CACHE_RECEIVE_STATUS receive %04x->%04x opcode: %x [%f]" % (_source, _destination, message.opcode, time.time()))
+        opcode_name = BtMeshOpcode.get(message.opcode).name.lower()
         self.update(
             _source,
-            message["opcode"],
+            message.opcode,
             message[opcode_name]
         )
+        if _source == 0x010a:
+            _LOGGER.debug("CACHE_RECEIVE_STATUS receive %04x->%04x %s" % (_source, _destination, message[opcode_name]))
 
 
 
@@ -250,7 +261,6 @@ class BtMeshApplication(Application, TimeServerMixin):
         self.cache = BtMeshCache()
 
         self._lock_get = asyncio.Lock()
-        self._lock = asyncio.Lock()
 
         super().__init__(self.hass.loop)
 
@@ -277,6 +287,9 @@ class BtMeshApplication(Application, TimeServerMixin):
         self.generic_onoff_init_receive_status()
         self.sensor_init_receive_status()
         self.generic_battery_init_receive_status()
+        self.light_lightness_init_receive_status()
+        self.light_ctl_init_receive_status()
+        self.light_hsl_init_receive_status()
 
 
     ##################################################
@@ -302,9 +315,8 @@ class BtMeshApplication(Application, TimeServerMixin):
 
     async def generic_onoff_get(self, address, app_index) -> Container | None:
         """Get GenericOnOff state"""
-        _LOGGER.debug("Get GenericOnOff state on %04x" % (address))
         client = self.elements[0][GenericOnOffClient]
-        (cache_valid, result) = self.cache.get(address, GenericOnOffOpcode.GENERIC_ONOFF_STATUS);
+        (cache_valid, result) = self.cache.get(address, GenericOnOffOpcode.GENERIC_ONOFF_STATUS)
         if not cache_valid:
             try:
                 result = await client.get(
@@ -315,18 +327,19 @@ class BtMeshApplication(Application, TimeServerMixin):
                 )
             except asyncio.TimeoutError:
                 pass
-        _LOGGER.debug("Get GenericOnOff state %04x: result %s [%f]" % (address, repr(result), time.time()))
-        return result;
+        #_LOGGER.debug("Get GenericOnOff state %04x: result %s [%f]" % (address, repr(result), time.time()))
+        return result
 
-    async def generic_onoff_set(self, address, app_index, state) -> None:
+    async def generic_onoff_set(self, address, app_index, state, transition_time=None) -> None:
         """Set GenericOnOff state"""
-        _LOGGER.debug("Set GenericOnOff state %04x: result %s" % (address, repr(state)))
         try:
             client = self.elements[0][GenericOnOffClient]
             await client.set(
                 address,
                 app_index=app_index,
                 onoff=state,
+                delay=None if transition_time is None else 0,
+                transition_time=transition_time,
                 send_interval=G_SEND_INTERVAL,
                 timeout=G_TIMEOUT,
             )
@@ -337,195 +350,224 @@ class BtMeshApplication(Application, TimeServerMixin):
             )
         except asyncio.TimeoutError:
             pass
+        #_LOGGER.debug("Set GenericOnOff state %04x: result %s [%f]" % (address, repr(state), time.time()))
 
     # LightLightness
-#    def light_lightness_init_receive_status(self) -> None:
-#        def receive_status(
-#            _source: int,
-#            _app_index: int,
-#            _destination: Union[int, UUID],
-#            message: ParsedMeshMessage,
-#        ):
-#            self.cache_update(
-#                _source,
-#                BtMeshModelId.LightLightnessSetupServer,
-#                message.light_lightness_status
-#            )
-#
-#        client = self.elements[0][LightLightnessClient]
-#        client.app_message_callbacks[LightLightnessOpcode.LIGHT_LIGHTNESS_STATUS].add(receive_status)
+    def light_lightness_init_receive_status(self) -> None:
+        client = self.elements[0][LightLightnessClient]
+        client.app_message_callbacks[LightLightnessOpcode.LIGHT_LIGHTNESS_STATUS].add(self.cache.receive_message)
 
-#    async def light_lightness_get(self, address, app_index) -> Container | None:
-#        """Get LightLightness state"""
-#        client = self.elements[0][LightLightnessClient]
-#        return await self.cache_proxy(
-#            address,
-#            BtMeshModelId.LightLightnessSetupServer,
-#            client.get(
-#                [address],
-#                app_index=app_index,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT
-#            )
-#        )
+    async def light_lightness_get(self, address, app_index) -> Container | None:
+        """Get LightLightness state"""
+        client = self.elements[0][LightLightnessClient]
+        (cache_valid, result) = self.cache.get(address, LightLightnessOpcode.LIGHT_LIGHTNESS_STATUS)
+        if not cache_valid:
+            try:
+                result = await client.get(
+                    address,
+                    app_index=app_index,
+                    send_interval=G_SEND_INTERVAL,
+                    timeout=G_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                pass
+#        _LOGGER.debug("Get LightLightness state %04x: result %s [%f]" % (address, repr(result), time.time()))
+        return result
 
-#    async def light_lightness_set(self, address, app_index, lightness) -> None:
-#        """Set LightLightness lightness"""
-#        client = self.elements[0][LightLightnessClient]
-#        async with self._lock:
-#            await client.set(
-#                [address],
-#                app_index=app_index,
-#                lightness=lightness,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT
-#            )
-#        self.cache_invalidate(address, None)
+    async def light_lightness_set(self, address, app_index, lightness, transition_time=None) -> None:
+        """Set LightLightness lightness"""
+        client = self.elements[0][LightLightnessClient]
+        try:
+            await client.set(
+                address,
+                app_index=app_index,
+                lightness=lightness,
+                delay=None if transition_time is None else 0,
+                transition_time=transition_time,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT,
+            )
+            self.cache.update_and_invalidate(
+                address,
+                LightLightnessOpcode.LIGHT_LIGHTNESS_STATUS,
+                Container(present_lightness=lightness)
+            )
+        except asyncio.TimeoutError:
+            pass
 
 
     # LightCTL
-#    def light_ctl_init_receive_status(self):
-#        def receive_status(
-#            _source: int,
-#            _app_index: int,
-#            _destination: Union[int, UUID],
-#            message: ParsedMeshMessage,
-#        ) -> None:
-#            self.cache_update(
-#                _source,
-#                BtMeshModelId.LightCTLSetupServer,
-#                message.light_ctl_status,
-#                extra_key=LightCTLOpcode.LIGHT_CTL_STATUS
-#            )
+    def light_ctl_init_receive_status(self):
+        client = self.elements[0][LightCTLClient]
+        client.app_message_callbacks[LightCTLOpcode.LIGHT_CTL_STATUS].add(self.cache.receive_message)
+        client.app_message_callbacks[LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS].add(self.cache.receive_message)
 
-#        def receive_temperature_range_status(
-#            _source: int,
-#            _app_index: int,
-#            _destination: Union[int, UUID],
-#            message: ParsedMeshMessage,
-#        ) -> Container | None:
-#            self.cache_update(
-#                _source,
-#                BtMeshModelId.LightCTLSetupServer,
-#                message.light_ctl_temperature_range_status,
-#                extra_key=LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS
-#            )
+    async def light_ctl_get(self, address, app_index) -> Container | None:
+        """Get LightCTL state"""
+        client = self.elements[0][LightCTLClient]
+        (cache_valid, result) = self.cache.get(address, LightCTLOpcode.LIGHT_CTL_STATUS)
+        if not cache_valid:
+            try:
+                result = await client.get(
+                    address,
+                    app_index=app_index,
+                    send_interval=G_SEND_INTERVAL,
+                    timeout=G_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                pass
+        #_LOGGER.debug("Get LightCTL state %04x: result %s [%f]" % (address, repr(result), time.time()))
+        return result
 
-#        client = self.elements[0][LightLightnessClient]
-#        client.app_message_callbacks[LightCTLOpcode.LIGHT_CTL_STATUS].add(receive_status)
-#        client.app_message_callbacks[LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS].add(receive_temperature_range_status)
+    async def light_ctl_temperature_range_get(self, address, app_index) -> Container | None:
+        """Get LightCTL temperature range"""
+        client = self.elements[0][LightCTLClient]
+        (cache_valid, result) = self.cache.get(address, LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS)
+        if not cache_valid:
+            try:
+                result = await client.temperature_range_get(
+                    address,
+                    app_index=app_index,
+                    send_interval=G_SEND_INTERVAL,
+                    timeout=G_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                pass
+        #_LOGGER.debug("Get LightCTL Temperature Range state %04x: result %s [%f]" % (address, repr(result), time.time()))
+        return result
 
-#    async def light_ctl_get(self, address, app_index) -> Container | None:
-#        """Get LightCTL state"""
-#        client = self.elements[0][LightCTLClient]
-#        result = await self.cache_proxy(
-#            address,
-#            BtMeshModelId.LightCTLSetupServer,
-#            client.get(
-#                [address],
-#                app_index=app_index,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT
-#            ),
-#            extra_key=LightCTLOpcode.LIGHT_CTL_STATUS
-#        )
-#        _LOGGER.debug("Get LightCTL state %04x: result %s [%f]" % (address, repr(result), time.time()))
-#        return result
-
-#    async def light_ctl_set(self, address, app_index, lightness, temperature) -> None:
-#        """Set LightCTL state"""
-#        _LOGGER.debug("Set LightCTL state %04x: lightness %d, temperature %d" % (address, lightness, temperature))
-#        client = self.elements[0][LightCTLClient]
-#        async with self._lock:
-#            await client.set(
-#                [address],
-#                app_index=app_index,
-#                ctl_lightness=lightness,
-#                ctl_temperature=temperature,
-#                ctl_delta_uv=0,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT
-#            )
-#        self.cache_update_and_invalidate(
-#            address,
-#            BtMeshModelId.LightCTLServer,
-#            Container(
-#                present_ctl_lightness=lightness,
-#                present_ctl_temperature=temperature
-#            )
-#        )
-
-#    async def light_ctl_temperature_range_get(self, address, app_index) -> Container | None:
-#        """Get LightCTL temperature range"""
-#        client = self.elements[0][LightCTLClient]
-#        return await self.cache_proxy(
-#            address,
-#            BtMeshModelId.LightCTLSetupServer,
-#            client.temperature_range_get(
-#                [address],
-#                app_index=app_index,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT
-#            ),
-#            extra_key=LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS
-#        )
+    async def light_ctl_set(self, address, app_index, lightness, temperature, transition_time=None) -> None:
+        """Set LightCTL state"""
+        client = self.elements[0][LightCTLClient]
+        try:
+            await client.set(
+                address,
+                app_index=app_index,
+                ctl_lightness=lightness,
+                ctl_temperature=temperature,
+                ctl_delta_uv=0,
+                delay=None if transition_time is None else 0,
+                transition_time=transition_time,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT
+            )
+            self.cache.update_and_invalidate(
+                address,
+                LightCTLOpcode.LIGHT_CTL_STATUS,
+                Container(
+                    present_ctl_lightness=lightness,
+                    present_ctl_temperature=temperature
+                )
+            )
+        except asyncio.TimeoutError:
+            pass
+        #_LOGGER.debug("Set LightCTL state %04x: lightness %d, temperature %d" % (address, lightness, temperature))
 
 
     # LightHSL
-#    def light_hsl_init_receive_status(self) -> None:
-#        def receive_status(
-#            _source: int,
-#            _app_index: int,
-#            _destination: Union[int, UUID],
-#            message: ParsedMeshMessage,
-#        ):
-#            self.cache_update(
-#                _source,
-#                BtMeshModelId.LightHSLSetupServer,
-#                message.light_hsl_status
-#            )
+    def light_hsl_init_receive_status(self) -> None:
+        client = self.elements[0][LightHSLClient]
+        client.app_message_callbacks[LightHSLOpcode.LIGHT_HSL_STATUS].add(self.cache.receive_message)
+        client.app_message_callbacks[LightHSLOpcode.LIGHT_HSL_TARGET_STATUS].add(self.cache.receive_message)
 
-#        client = self.elements[0][LightHSLClient]
-#        client.app_message_callbacks[LightHSLOpcode.LIGHT_HSL_STATUS].add(receive_status)
+    async def light_hsl_get(self, address, app_index) -> Container | None:
+        """Get LightHSL state"""
+        client = self.elements[0][LightHSLClient]
+        (cache_valid, result) = self.cache.get(address, LightHSLOpcode.LIGHT_HSL_STATUS)
+        if not cache_valid:
+            try:
+                result = await client.get(
+                    address,
+                    app_index=app_index,
+                    send_interval=G_SEND_INTERVAL,
+                    timeout=G_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                pass
+#        _LOGGER.debug("Get LightHSL state %04x: result %s [%f]" % (address, repr(result), time.time()))
+        return result
 
-#    async def light_hsl_get(self, address, app_index) -> Container | None:
-#        """Get LightHSL state"""
-#        client = self.elements[0][LightHSLClient]
-#        return await self.cache_proxy(
-#            address,
-#            BtMeshModelId.LightHSLSetupServer,
-#            client.get(
-#                [address],
-#                app_index=app_index,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT
-#            )
-#        )
+    async def light_hsl_get_target(self, address, app_index) -> Container | None:
+        """Get LightHSL state"""
+        client = self.elements[0][LightHSLClient]
+        (cache_valid, result) = self.cache.get(address, LightHSLOpcode.LIGHT_HSL_TARGET_STATUS)
+        if not cache_valid:
+            try:
+                result = await client.target_get(
+                    address,
+                    app_index=app_index,
+                    send_interval=G_SEND_INTERVAL,
+                    timeout=G_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                pass
+#        _LOGGER.debug("Get LightHSL target state %04x: result %s [%f]" % (address, repr(result), time.time()))
+        return result
 
-#    async def light_hsl_set(self, address, app_index, lightness, hue, saturation) -> None:
-#        """Set LightHSL lightness, hue and saturation"""
-#        client = self.elements[0][LightHSLClient]
-#        async with self._lock:
-#            await client.set(
-#                [address],
-#                app_index=app_index,
-#                hsl_lightness=lightness,
-#                hsl_hue=hue,
-#                hsl_saturation=saturation,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT
-#            )
-#        self.cache_invalidate(address, None)
+    async def light_hsl_set(self, address, app_index, lightness, hue, saturation, transition_time=None) -> None:
+        """Set LightHSL lightness, hue and saturation"""
+        client = self.elements[0][LightHSLClient]
+        try:
+            await client.set(
+                address,
+                app_index=app_index,
+                hsl_lightness=lightness,
+                hsl_hue=hue,
+                hsl_saturation=saturation,
+                delay=None if transition_time is None else 0,
+                transition_time=transition_time,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT
+            )
+            self.cache.update_and_invalidate(
+                address,
+                LightHSLOpcode.LIGHT_HSL_STATUS,
+                Container(
+                    hsl_lightness=lightness,
+                    hsl_hue=hue,
+                    hsl_saturation=saturation
+                )
+            )
+            self.cache.update_and_invalidate(
+                address,
+                LightHSLOpcode.LIGHT_HSL_TARGET_STATUS,
+                Container(
+                    hsl_lightness=lightness,
+                    hsl_hue=hue,
+                    hsl_saturation=saturation
+                )
+            )
+        except asyncio.TimeoutError:
+            pass
 
 
     # Sensor
     def sensor_init_receive_status(self) -> None:
+        def receive_sensor_status(
+            _source: int,
+            _app_index: int,
+            _destination: Union[int, UUID],
+            message: ParsedMeshMessage,
+        ):
+            opcode_name = BtMeshOpcode.get(message.opcode).name.lower()
+            result = message[opcode_name]
+            for property in result:
+                self.cache.update(
+                    _source,
+                    message.opcode,
+                    property,
+                    extra_key=property.sensor_setting_property_id
+                )
+
+            if _source == 0x010a:
+                _LOGGER.debug("CACHE_RECEIVE_STATUS receive %04x->%04x %s" % (_source, _destination, message[opcode_name]))
+
         client = self.elements[0][SensorClient]
         client.app_message_callbacks[SensorOpcode.SENSOR_DESCRIPTOR_STATUS].add(self.cache.receive_message)
-        client.app_message_callbacks[SensorOpcode.SENSOR_STATUS].add(self.cache.receive_message)
+        client.app_message_callbacks[SensorOpcode.SENSOR_STATUS].add(receive_sensor_status)
 
 
-    async def sensor_descriptor_get(self, address, app_index) -> Container | None:
+    async def sensor_descriptor_get(self, address, app_index, passive) -> Container | None:
         client = self.elements[0][SensorClient]
         (cache_valid, result) = self.cache.get(address, SensorOpcode.SENSOR_DESCRIPTOR_STATUS)
         if not cache_valid:
@@ -541,10 +583,14 @@ class BtMeshApplication(Application, TimeServerMixin):
         return result
 
 
-    async def sensor_get(self, address, app_index, property_id) -> Container | None:
+    async def sensor_get(self, address, app_index, property_id, passive) -> Container | None:
         client = self.elements[0][SensorClient]
-        (cache_valid, result) = self.cache.get(address, SensorOpcode.SENSOR_STATUS)
-        if not cache_valid:
+        (cache_valid, property) = self.cache.get(
+            address,
+            SensorOpcode.SENSOR_STATUS,
+            extra_key=property_id
+        )
+        if not cache_valid and not passive:
             try:
                 result = await client.get(
                     address,
@@ -552,15 +598,15 @@ class BtMeshApplication(Application, TimeServerMixin):
                     send_interval=G_SEND_INTERVAL,
                     timeout=G_TIMEOUT,
                 )
+                if result:
+                    for property in result:
+                        if property_id == property.sensor_setting_property_id:
+                            return property
+                    return None
             except asyncio.TimeoutError:
                 pass
-        if result:
-            for property in result:
-                if property_id == property.sensor_setting_property_id:
-#                    _LOGGER.debug("sensor_get() property=%s" % (repr(property)))
-                    return property
-#        _LOGGER.debug("sensor_get() None")
-        return None
+
+        return property
 
 
     # Generic Battery

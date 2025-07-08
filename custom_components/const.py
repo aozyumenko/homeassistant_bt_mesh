@@ -8,14 +8,13 @@ from homeassistant.const import Platform
 DOMAIN: Final = "bt_mesh"
 PLATFORMS: Final = (
     Platform.SWITCH,
-#    Platform.LIGHT,
+    Platform.LIGHT,
     Platform.SENSOR,
 #    Platform.CLIMATE,
 )
 
 
-BT_MESH_DISCOVERY_ENTITY_NEW = "bt_mesh_discovery_entity_new.{}"
-
+BT_MESH_DISCOVERY_ENTITY_NEW: Final = "bt_mesh_discovery_entity_new.{}"
 
 # domain data keys
 BT_MESH_CONFIG: Final = "config"
@@ -23,27 +22,25 @@ BT_MESH_APPLICATION: Final = "application"
 BT_MESH_CFGCLIENT_CONF: Final = "mesh_cfgclient_conf"
 BT_MESH_ALREADY_DISCOVERED: Final = "bt_mesh_already_discovered"
 
-
 # config keys
-CONF_DBUS_APP_PATH = "dbus_app_path"
+CONF_DBUS_APP_PATH: Final = "dbus_app_path"
 CONF_DBUS_APP_TOKEN: Final = "dbus_app_token"
-CONF_MESH_CFGCLIENT_CONFIG_PATH = "cfgclient_config_path"
-
+CONF_MESH_CFGCLIENT_CONFIG_PATH: Final = "cfgclient_config_path"
+CONF_ELEMENTS: Final = "elements"
+CONF_UNICAST_ADDR: Final = "unicast_addr"
+CONF_SENSOR_DESCRIPTORS: Final = "sensor_descriptors"
+CONF_PASSIVE: Final = "passive"
 
 # config file defaults
 DEFAULT_DBUS_APP_PATH: Final = "/mesh/homeassistant/client0"
-DEFAULT_MESH_CFGCLIENT_CONFIG_PATH = "~/.config/meshcfg/config_db.json"
-DEFAULT_MESH_JOIN_TIMEOUT = 120
-
+DEFAULT_MESH_CFGCLIENT_CONFIG_PATH: Final = "~/.config/meshcfg/config_db.json"
+DEFAULT_MESH_JOIN_TIMEOUT: Final = 120
 
 # Mesh application config
-#G_TIMEOUT = 3.0
-#G_SEND_INTERVAL = 0.5
-G_TIMEOUT = 0.15
-G_SEND_INTERVAL = 0.05
-G_UNACK_RETRANSMISSIONS = 3
-G_UNACK_INTERVAL = 0.05
-G_MESH_SENSOR_CACHE_TIMEOUT = 60
+G_TIMEOUT: Final = 0.15
+G_SEND_INTERVAL: Final = 0.05
+G_UNACK_RETRANSMISSIONS: Final = 3
+G_UNACK_INTERVAL: Final = 0.05
 
-G_MESH_CACHE_UPDATE_TIMEOUT = 15
-G_MESH_CACHE_INVALIDATE_TIMEOUT = 360
+G_MESH_CACHE_UPDATE_TIMEOUT: Final = 15
+G_MESH_CACHE_INVALIDATE_TIMEOUT: Final = 360

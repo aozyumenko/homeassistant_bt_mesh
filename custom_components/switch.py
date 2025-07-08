@@ -36,10 +36,11 @@ async def async_setup_entry(
     @callback
     def async_add_switch(
         app: BtMeshApplication,
-        cfg_model: MeshCfgModel
+        cfg_model: MeshCfgModel,
+        passive: bool
     ) -> None:
 #        _LOGGER.debug(f"async_add_switch(): uuid={cfg_model.device.uuid}, model_id={cfg_model.model_id}, addr={cfg_model.unicast_addr:04x}, app_key={cfg_model.app_key}")
-        add_entities([BtMeshSwitch_GenericOnOff(app, cfg_model)])
+        add_entities([BtMeshSwitch_GenericOnOff(app, cfg_model, passive)])
 
 
     config_entry.async_on_unload(
@@ -56,6 +57,18 @@ async def async_setup_entry(
 class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
     """Representation of an Bluetooth Mesh Generic On/Off service."""
 
+    def __init__(
+        self,
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        passive: bool
+    ) -> None:
+        if cfg_model.model_id != BtMeshModelId.GenericOnOffServer:
+            raise ValueError("cfg_model.model_id must be GenericOnOffServer")
+
+        BtMeshEntity.__init__(self, app, cfg_model, passive)
+        self._attr_available = False
+
     async def async_update(self):
         """Request the device to update its status."""
         state = await self.app.generic_onoff_get(
@@ -63,12 +76,10 @@ class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
             self.cfg_model.app_key
         )
         if state is not None:
-            if 'target_onoff' in state and 'remaining_time' in state and state.remaining_time > 0:
+            if "target_onoff" in state and "remaining_time" in state and state.remaining_time > 0:
                 self._attr_is_on = state.target_onoff
-            elif 'present_onoff' in state:
-                self._attr_is_on = state.present_onoff
             else:
-                self._attr_is_on = None
+                self._attr_is_on = state.present_onoff
         else:
             self._attr_is_on = None
 
