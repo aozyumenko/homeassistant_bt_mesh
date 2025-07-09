@@ -10,8 +10,8 @@ from .mesh_cfgclient_conf import MeshCfgModel
 from ..const import DOMAIN
 
 
-import logging
-_LOGGER = logging.getLogger(__name__)
+#import logging
+#_LOGGER = logging.getLogger(__name__)
 
 
 class ClassNotFoundError(Exception):
@@ -50,5 +50,3 @@ class BtMeshEntity(Entity):
         )
         self._attr_unique_id = self.cfg_model.unique_id
         self._attr_name = self.cfg_model.name
-
-        _LOGGER.debug(f"BtMeshEntity: {self._attr_device_info['name']}")

@@ -20,7 +20,7 @@ from .bt_mesh.mesh_cfgclient_conf import MeshCfgclientConf
 from .bt_mesh import BtMeshModelId
 
 # FIXME: for testing only
-from .bt_mesh.entity import BtMeshEntity
+#from .bt_mesh.entity import BtMeshEntity
 
 
 from .const import (
@@ -45,9 +45,6 @@ from .const import (
 
 import logging
 _LOGGER = logging.getLogger(__name__)
-
-# FIXME: for debug
-import json
 
 
 MODEL_ID_PLATFROM: Final = {
@@ -105,6 +102,26 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
+
+
+class BtMeshConfElementsPassive:
+    _passive: dict
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        try:
+            self._passive = {
+                f"{entry[CONF_UNICAST_ADDR]:04x}": entry[CONF_PASSIVE]
+                    for entry in hass.data[DOMAIN][BT_MESH_CONFIG][CONF_ELEMENTS]
+                        if CONF_PASSIVE in entry
+            }
+        except KeyError as e:
+            self.passive = dict()
+
+    def get(self, unicast_addr: int) -> bool:
+        return self._passive.get(f"{unicast_addr:04x}", False)
+
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration from config."""
 
@@ -120,13 +137,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
     """Set up BT Mesh from a config entry."""
 
 #    _LOGGER.debug("async_setup_entry(): entry_id=%s, entry_domain=%s, entry=%s" % (entry.entry_id, entry.domain, entry.data))
 
-    _LOGGER.debug(f"BT_MESH_CONFIG: {hass.data[DOMAIN][BT_MESH_CONFIG]}")
-    _LOGGER.debug(f"filename = {entry.data[CONF_MESH_CFGCLIENT_CONFIG_PATH]}")
+#    _LOGGER.debug(f"BT_MESH_CONFIG: {hass.data[DOMAIN][BT_MESH_CONFIG]}")
+#    _LOGGER.debug(f"filename = {entry.data[CONF_MESH_CFGCLIENT_CONFIG_PATH]}")
 
     # create mesh network config
     mesh_conf = MeshCfgclientConf(
@@ -165,13 +182,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         f"{DOMAIN}_{entry.title}_track_mesh_conf"
     )
 
+    # FIXME: "track_mesh_conf_task" to constant
+    hass.data[DOMAIN][entry.entry_id]["track_mesh_conf_task"] = track_mesh_conf_task
+
     return True
 
 
-async def track_mesh_conf(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-):
+async def track_mesh_conf(hass: HomeAssistant, entry: BtMeshConfigEntry):
     app = hass.data[DOMAIN][entry.entry_id][BT_MESH_APPLICATION]
     mesh_conf = hass.data[DOMAIN][entry.entry_id][BT_MESH_CFGCLIENT_CONF]
 
@@ -211,29 +228,19 @@ async def track_mesh_conf(
         await asyncio.sleep(5)
 
 
-async def load_devices_config(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-) -> None:
+async def load_devices_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
     app = hass.data[DOMAIN][entry.entry_id][BT_MESH_APPLICATION]
     mesh_conf = hass.data[DOMAIN][entry.entry_id][BT_MESH_CFGCLIENT_CONF]
     device_registry = dr.async_get(hass)
 
     # get passive flag from config
-    passive_cof = dict()
-    if CONF_ELEMENTS in hass.data[DOMAIN][BT_MESH_CONFIG]:
-        passive_conf = {
-            f"{entry[CONF_UNICAST_ADDR]:04x}": entry[CONF_PASSIVE]
-                for entry in hass.data[DOMAIN][BT_MESH_CONFIG][CONF_ELEMENTS]
-                    if CONF_PASSIVE in entry
-        }
+    conf_elements_passive = BtMeshConfElementsPassive(hass)
 
     cfg_models = mesh_conf.get_models()
 
 #    _LOGGER.debug("load_devices_config(): start")
 
     for cfg_model in cfg_models:
-        unicast_addr_key = f"{cfg_model.unicast_addr:04x}"
 #        _LOGGER.debug(f"model: model_id={cfg_model.model_id}, {cfg_model.unique_id}")
 
         # sensor model is loaded in dedicated task
@@ -248,7 +255,7 @@ async def load_devices_config(
 
         # skip disabled devices
         device = device_registry.async_get_device(
-            identifiers={(DOMAIN, str(cfg_model.device.uuid))}
+            identifiers={(DOMAIN, str(cfg_model.device.unique_id))}
         )
         if device and device.disabled_by:
 #            _LOGGER.debug("    disabled")
@@ -256,7 +263,7 @@ async def load_devices_config(
 
         if cfg_model.model_id in MODEL_ID_PLATFROM:
 #            _LOGGER.debug(f"    send {BT_MESH_DISCOVERY_ENTITY_NEW.format(MODEL_ID_PLATFROM[cfg_model.model_id])}")
-            passive = True if unicast_addr_key in passive_conf and passive_conf[unicast_addr_key] else False
+            passive = conf_elements_passive.get(cfg_model.unicast_addr)
             async_dispatcher_send(
                 hass,
                 BT_MESH_DISCOVERY_ENTITY_NEW.format(MODEL_ID_PLATFROM[cfg_model.model_id]),
@@ -269,10 +276,7 @@ async def load_devices_config(
 #            _LOGGER.debug(f"    {cfg_model.model_id} not in platform")
 
 
-async def load_sensors_config(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-) -> None:
+async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
     app = hass.data[DOMAIN][entry.entry_id][BT_MESH_APPLICATION]
     mesh_conf = hass.data[DOMAIN][entry.entry_id][BT_MESH_CFGCLIENT_CONF]
     device_registry = dr.async_get(hass)
@@ -298,8 +302,6 @@ async def load_sensors_config(
     descriptors_updated: dict[int, Any] = dict()
 
     _LOGGER.debug("load_sensors_config(): start")
-#    _LOGGER.debug(descriptors_conf)
-#    _LOGGER.debug(descriptors)
 
     cfg_models = mesh_conf.get_models_by_model_id(BtMeshModelId.SensorServer)
 
@@ -308,24 +310,22 @@ async def load_sensors_config(
         for cfg_model in cfg_models:
             unicast_addr_key = f"{cfg_model.unicast_addr:04x}"
             passive = True if unicast_addr_key in passive_conf and passive_conf[unicast_addr_key] else False
-            _LOGGER.debug(f"sensor: unicast_addr={cfg_model.unicast_addr} model_id={cfg_model.model_id}, {cfg_model.unique_id}")
+#            _LOGGER.debug(f"sensor: unicast_addr={cfg_model.unicast_addr} model_id={cfg_model.model_id}, {cfg_model.unique_id}")
 
             # skip disabled devices
-            device = device_registry.async_get_device(
-                identifiers={(DOMAIN, str(cfg_model.device.uuid))}
+            device_entry = device_registry.async_get_device(
+                identifiers={(DOMAIN, str(cfg_model.device.unique_id))}
             )
-            if device and device.disabled_by:
+            if device_entry and device_entry.disabled_by:
 #                _LOGGER.debug("    disabled")
                 continue
 
             # get descriptors from config
             if unicast_addr_key in descriptors_conf:
                 sensor_descriptors = descriptors_conf[unicast_addr_key]
-                _LOGGER.debug(f"descriptor from config: {unicast_addr_key} = {sensor_descriptors}")
             # get descriptors from local storage
             elif descriptors is not None and unicast_addr_key in descriptors:
                 sensor_descriptors = descriptors[unicast_addr_key]
-#                _LOGGER.debug(f"descriptor from storage: {unicast_addr_key} = {sensor_descriptors}")
             # get descriptors from device
             else:
                 _sensor_descriptors = await app.sensor_descriptor_get(
@@ -350,7 +350,6 @@ async def load_sensors_config(
 
             # skip already discovered devices
             if cfg_model.unique_id in hass.data[DOMAIN][entry.entry_id][BT_MESH_ALREADY_DISCOVERED]:
-#                _LOGGER.debug(f"    {cfg_model.unique_id} already discovered")
                 continue
 
             try:
@@ -387,10 +386,7 @@ async def load_sensors_config(
     _LOGGER.debug("load_sensors_config():no new devices - exit")
 
 
-async def cleanup_device_registry(
-    hass: HomeAssistant,
-    entry: ConfigEntry
-) -> None:
+async def cleanup_device_registry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
     """Remove deleted device registry entry if there are no remaining entities."""
 
     app = hass.data[DOMAIN][entry.entry_id][BT_MESH_APPLICATION]
@@ -398,7 +394,8 @@ async def cleanup_device_registry(
 
     device_registry = dr.async_get(hass)
 
-    cfg_devices_uuid = [str(cfg_device.uuid) for cfg_device in mesh_conf.get_devices()]
+    # FIXME: cfg_devices_uuid -> cfg_device_unique_id
+    cfg_devices_uuid = [str(cfg_device.unique_id) for cfg_device in mesh_conf.get_devices()]
 
     good = 0;
     bad = 0
@@ -416,3 +413,36 @@ async def cleanup_device_registry(
     _LOGGER.debug(f"good={good}, bad={bad}")
 
     pass
+
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
+    """Unloading the Tuya platforms."""
+    _LOGGER.debug(f"async_unload_entry(): {entry}")
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        runtime_data = hass.data[DOMAIN].pop(entry.entry_id)
+        track_mesh_conf_task = runtime_data["track_mesh_conf_task"]
+        if not track_mesh_conf_task.done():
+            track_mesh_conf_task.cancel()
+        application = runtime_data[BT_MESH_APPLICATION]
+        await application.dbus_disconnect()
+
+    return unload_ok
+
+#async def async_remove_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
+#    """Remove a config entry.
+
+#    This will revoke the credentials from Tuya.
+#    """
+#    _LOGGER.debug(f"async_remove_entry()")
+#    pass
+
+
+#async def async_remove_config_entry_device(
+#    hass: HomeAssistant, config_entry: BtMeshConfigEntry, device_entry: dr.DeviceEntry
+#) -> bool:
+#    """Remove BT Mesh config entry from a device."""
+#
+#    _LOGGER.debug(f"async_remove_config_entry_device(): {device_entry}")
+#
+#    return True
