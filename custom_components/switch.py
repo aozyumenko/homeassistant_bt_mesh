@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
-from typing import Union
 from construct import Container
 
 from homeassistant.core import HomeAssistant, callback
@@ -13,10 +13,18 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.const import Platform
 
-from .bt_mesh.entity import BtMeshEntity
-from .bt_mesh import BtMeshModelId
-from .bt_mesh.mesh_cfgclient_conf import MeshCfgModel
-from .const import DOMAIN, BT_MESH_APPLICATION, BT_MESH_DISCOVERY_ENTITY_NEW
+from bluetooth_mesh.messages.generic.onoff import GenericOnOffOpcode
+from bluetooth_mesh.models.generic.onoff import GenericOnOffClient
+
+from bt_mesh_ctrl import BtMeshModelId
+from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
+
+from .entity import BtMeshEntity
+from .const import (
+    BT_MESH_DISCOVERY_ENTITY_NEW,
+    G_SEND_INTERVAL,
+    G_TIMEOUT,
+)
 
 import logging
 _LOGGER = logging.getLogger(__name__)
@@ -30,9 +38,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up the measuring sensor entry."""
 
-    # FIXME: drop?
-    app = hass.data[DOMAIN][config_entry.entry_id][BT_MESH_APPLICATION]
-
     @callback
     def async_add_switch(
         app: BtMeshApplication,
@@ -41,7 +46,6 @@ async def async_setup_entry(
     ) -> None:
 #        _LOGGER.debug(f"async_add_switch(): uuid={cfg_model.device.uuid}, model_id={cfg_model.model_id}, addr={cfg_model.unicast_addr:04x}, app_key={cfg_model.app_key}")
         add_entities([BtMeshSwitch_GenericOnOff(app, cfg_model, passive)])
-
 
     config_entry.async_on_unload(
         async_dispatcher_connect(
@@ -57,6 +61,10 @@ async def async_setup_entry(
 class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
     """Representation of an Bluetooth Mesh Generic On/Off service."""
 
+    status_opcodes = (
+        GenericOnOffOpcode.GENERIC_ONOFF_STATUS,
+    )
+
     def __init__(
         self,
         app: BtMeshApplication,
@@ -69,35 +77,56 @@ class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
         BtMeshEntity.__init__(self, app, cfg_model, passive)
         self._attr_available = False
 
+    async def query_model_state(self) -> any:
+        """Query GenericOnOff state."""
+        try:
+            client = self.app.elements[0][GenericOnOffClient]
+            return await client.get(
+                destination=self.unicast_addr,
+                app_index=self.app_key,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            pass
+        return None
+
     async def async_update(self):
-        """Request the device to update its status."""
-        state = await self.app.generic_onoff_get(
-            self.cfg_model.unicast_addr,
-            self.cfg_model.app_key
-        )
-        if state is not None:
-            if "target_onoff" in state and "remaining_time" in state and state.remaining_time > 0:
-                self._attr_is_on = state.target_onoff
+        """Extract switch state from GenericOnOff model state."""
+        if self.model_state is not None:
+            if "target_onoff" in self.model_state and "remaining_time" in self.model_state and self.model_state.remaining_time > 0:
+                self._attr_is_on = self.model_state.target_onoff
             else:
-                self._attr_is_on = state.present_onoff
+                self._attr_is_on = self.model_state.present_onoff
         else:
             self._attr_is_on = None
 
         self._attr_available = self._attr_is_on is not None
-#        _LOGGER.debug(f"Get GenericOnOff state on {self.cfg_model.unicast_addr:04x}: {self._attr_is_on}, avail {self._attr_available}")
+
+    async def generic_onoff_set(self, state:int, transition_time:float=None) -> None:
+        """Set GenericOnOff state"""
+        try:
+            client = self.app.elements[0][GenericOnOffClient]
+            result = await client.set(
+                destination=self.unicast_addr,
+                app_index=self.app_key,
+                onoff=state,
+                delay=None if transition_time is None else 0,
+                transition_time=transition_time,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT,
+            )
+            self.update_model_state(result)
+            _LOGGER.debug(f"Set GenericOnOff state {self.unicast_addr:04x}: result {repr(result)} [{time.time():f}]")
+        except asyncio.TimeoutError:
+            self.update_model_state(Container(present_onoff=1 if state else 0))
+            _LOGGER.debug(f"Set GenericOnOff state {self.unicast_addr:04x}: result Timeout [{time.time():f}]")
+        self.invalidate_device_state()
 
     async def async_turn_on(self, **kwargs):
         """Turn the switch on."""
-        await self.app.generic_onoff_set(
-            self.cfg_model.unicast_addr,
-            self.cfg_model.app_key,
-            1
-        )
+        await self.generic_onoff_set(1)
 
     async def async_turn_off(self, **kwargs):
         """Turn the switch off."""
-        await self.app.generic_onoff_set(
-            self.cfg_model.unicast_addr,
-            self.cfg_model.app_key,
-            0
-        )
+        await self.generic_onoff_set(0)

@@ -2,6 +2,8 @@
 
 import asyncio
 import async_timeout
+import uuid
+import socket
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
@@ -14,7 +16,7 @@ from .const import (
     CONF_MESH_CFGCLIENT_CONFIG_PATH,
     DEFAULT_MESH_JOIN_TIMEOUT
 )
-from .bt_mesh.application import BtMeshApplication
+from .application import BtMeshApplication
 
 import logging
 _LOGGER = logging.getLogger(__name__)
@@ -29,7 +31,7 @@ class BtMeshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         _LOGGER.debug("BtMeshConfigFlow::init()")
         self.pin = None
         self.config = None
-        self.bt_mesh = None
+        self.app = None
         self.join_task = None
         self.pin = None
         self.token = None
@@ -44,10 +46,17 @@ class BtMeshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self.config = entry_data[BT_MESH_CONFIG]
 
         # create BT Mesh application
-        _LOGGER.debug("async_step_user: bt_mesh=%s" % (self.bt_mesh))
-        if self.bt_mesh is None:
-            self.bt_mesh = BtMeshApplication(
-                path=self.config[CONF_DBUS_APP_PATH]
+
+        _LOGGER.debug("async_step_user: app=%s" % (self.app))
+        if self.app is None:
+            self.app = BtMeshApplication(
+                hass=self.hass,
+                path=self.config[CONF_DBUS_APP_PATH],
+                # FixMe: put derive UUID to application
+                uuid=str(uuid.uuid5(
+                    uuid.NAMESPACE_DNS,
+                    socket.gethostname()
+                ))
             )
 
         if self.join_task is None:
@@ -108,7 +117,7 @@ class BtMeshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             async with async_timeout.timeout(DEFAULT_MESH_JOIN_TIMEOUT):
                 try:
-                    self.token = await self.bt_mesh.mesh_join(self)
+                    self.token = await self.app.mesh_join(self)
                 except Exception as err:
                     _LOGGER.error("Join failed: %s::%s", err, err.__class__.__name__)
         except:

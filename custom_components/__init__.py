@@ -15,12 +15,9 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 
-from .bt_mesh.application import BtMeshApplication
-from .bt_mesh.mesh_cfgclient_conf import MeshCfgclientConf
-from .bt_mesh import BtMeshModelId
-
-# FIXME: for testing only
-#from .bt_mesh.entity import BtMeshEntity
+from .application import BtMeshApplication
+from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgclientConf
+from bt_mesh_ctrl import BtMeshModelId
 
 
 from .const import (
@@ -244,9 +241,12 @@ async def load_devices_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
 #        _LOGGER.debug(f"model: model_id={cfg_model.model_id}, {cfg_model.unique_id}")
 
         # sensor model is loaded in dedicated task
-        if cfg_model.model_id == BtMeshModelId.SensorServer:
+        if cfg_model.model_id == BtMeshModelId.SensorServer or cfg_model.model_id == BtMeshModelId.SensorSetupServer:
 #            _LOGGER.debug(f"    skip sensor")
             continue
+
+        if cfg_model.model_id == BtMeshModelId.GenericBatteryServer:
+            _LOGGER.debug(f"### Load battery Server")
 
         # skip already discovered devices
         if cfg_model.unique_id in hass.data[DOMAIN][entry.entry_id][BT_MESH_ALREADY_DISCOVERED]:
@@ -304,13 +304,15 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
     _LOGGER.debug("load_sensors_config(): start")
 
     cfg_models = mesh_conf.get_models_by_model_id(BtMeshModelId.SensorServer)
+    cfg_models.extend(mesh_conf.get_models_by_model_id(BtMeshModelId.SensorSetupServer))
+    _LOGGER.debug(f"load_sensors_config(): {cfg_models}")
 
     while (True):
         repeat = False
         for cfg_model in cfg_models:
             unicast_addr_key = f"{cfg_model.unicast_addr:04x}"
             passive = True if unicast_addr_key in passive_conf and passive_conf[unicast_addr_key] else False
-#            _LOGGER.debug(f"sensor: unicast_addr={cfg_model.unicast_addr} model_id={cfg_model.model_id}, {cfg_model.unique_id}")
+            _LOGGER.debug(f"sensor: unicast_addr={cfg_model.unicast_addr} model_id={cfg_model.model_id}, {cfg_model.unique_id}")
 
             # skip disabled devices
             device_entry = device_registry.async_get_device(

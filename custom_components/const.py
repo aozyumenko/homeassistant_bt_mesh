@@ -15,12 +15,15 @@ PLATFORMS: Final = (
 
 
 BT_MESH_DISCOVERY_ENTITY_NEW: Final = "bt_mesh_discovery_entity_new.{}"
+BT_MESH_MSG: Final = "bt_mesh_msg.{:x}_{:x}"
+BT_MESH_INVALIDATE: Final = "bt_mesh_invalidate.{:x}"
 
 # domain data keys
 BT_MESH_CONFIG: Final = "config"
 BT_MESH_APPLICATION: Final = "application"
 BT_MESH_CFGCLIENT_CONF: Final = "mesh_cfgclient_conf"
 BT_MESH_ALREADY_DISCOVERED: Final = "bt_mesh_already_discovered"
+
 
 # config keys
 CONF_DBUS_APP_PATH: Final = "dbus_app_path"
@@ -37,10 +40,10 @@ DEFAULT_MESH_CFGCLIENT_CONFIG_PATH: Final = "~/.config/meshcfg/config_db.json"
 DEFAULT_MESH_JOIN_TIMEOUT: Final = 120
 
 # Mesh application config
-G_TIMEOUT: Final = 0.15
-G_SEND_INTERVAL: Final = 0.05
+G_TIMEOUT: Final = 0.6
+G_SEND_INTERVAL: Final = 0.2
 G_UNACK_RETRANSMISSIONS: Final = 3
 G_UNACK_INTERVAL: Final = 0.05
 
-G_MESH_CACHE_UPDATE_TIMEOUT: Final = 15
-G_MESH_CACHE_INVALIDATE_TIMEOUT: Final = 360
+G_MESH_CACHE_UPDATE_TIMEOUT: Final = 900
+G_MESH_CACHE_INVALIDATE_TIMEOUT: Final = 1800
