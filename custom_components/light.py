@@ -38,6 +38,7 @@ from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 from .entity import BtMeshEntity, ClassNotFoundError
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
+    DEFAULT_LIGHT_BRIGHTNESS,
     G_SEND_INTERVAL,
     G_TIMEOUT,
 )
@@ -150,21 +151,6 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
             pass
         return None
 
-    async def async_update(self) -> None:
-        if self.model_state is not None:
-            if "remaining_time" in self.model_state and self.model_state.remaining_time > 0:
-                lightness = self.model_state.target_lightness
-            else:
-                lightness = self.model_state.present_lightness
-            self._attr_brightness = BtMeshLightEntity.brightness_btmesh_to_hass(lightness)
-            self._attr_is_on = self._attr_brightness > 0
-            self._attr_available = True
-
-            if lightness > 0:
-                self._last_state = lightness
-        else:
-            self._attr_available = False
-
     async def light_lightness_set(self, lightness:int, transition_time:float=None) -> None:
         """Set LightLightness lightness"""
         try:
@@ -183,6 +169,21 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
             self.update_model_state(Container(present_lightness=lightness))
         self.invalidate_device_state()
 
+    async def async_update(self) -> None:
+        if self.model_state is not None:
+            if "remaining_time" in self.model_state and self.model_state.remaining_time > 0:
+                lightness = self.model_state.target_lightness
+            else:
+                lightness = self.model_state.present_lightness
+            self._attr_brightness = BtMeshLightEntity.brightness_btmesh_to_hass(lightness)
+            self._attr_is_on = self._attr_brightness > 0
+            self._attr_available = True
+
+            if lightness > 0:
+                self._last_state = lightness
+        else:
+            self._attr_available = False
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
         transition_time = int(kwargs[ATTR_TRANSITION]) if ATTR_TRANSITION in kwargs else None
@@ -198,8 +199,14 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
 
             # hack that allows us to use GenericOnOff instead of
             # LightLighting to turn on the light
-            if self._last_state:
+            if self._last_state is not None and self._last_state > 0:
                 self.update_model_state(Container(present_lightness=self._last_state))
+            else:
+                self.update_model_state(
+                    Container(
+                        present_lightness=self.brightness_hass_to_btmesh(DEFAULT_LIGHT_BRIGHTNESS)
+                    )
+                )
             self.invalidate_device_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -423,7 +430,7 @@ class BtMeshLight_LightHSL(BtMeshLightEntity):
             self._attr_is_on = self._attr_brightness > 0
             self._attr_available = True
 
-            if self.model_state.hsl_lightness > 0:
+            if self._last_state is None or self.model_state.hsl_lightness > 0:
                 self._last_state = (
                     self.model_state.hsl_lightness,
                     self.model_state.hsl_hue,
@@ -483,12 +490,20 @@ class BtMeshLight_LightHSL(BtMeshLightEntity):
 
             # hack that allows you to use GenericOnOff instead of
             # LightHSL to turn off the light
-            if self._last_state:
+            if self._last_state is not None:
                 self.update_model_state(
                     Container(
-                        hsl_lightness=self._last_state[0],
+                        hsl_lightness=self._last_state[0] if self._last_state[0] > 0 else self.brightness_hass_to_btmesh(DEFAULT_LIGHT_BRIGHTNESS),
                         hsl_hue=self._last_state[1],
                         hsl_saturation=self._last_state[2],
+                    )
+                )
+            else:
+                self.update_model_state(
+                    Container(
+                        hsl_lightness= self.brightness_hass_to_btmesh(DEFAULT_LIGHT_BRIGHTNESS),
+                        hsl_hue=0,
+                        hsl_saturation=0,
                     )
                 )
             self.invalidate_device_state()

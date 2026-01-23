@@ -39,6 +39,8 @@ DEFAULT_DBUS_APP_PATH: Final = "/mesh/homeassistant/client0"
 DEFAULT_MESH_CFGCLIENT_CONFIG_PATH: Final = "~/.config/meshcfg/config_db.json"
 DEFAULT_MESH_JOIN_TIMEOUT: Final = 120
 
+DEFAULT_LIGHT_BRIGHTNESS: Final = 128
+
 # Mesh application config
 G_TIMEOUT: Final = 0.6
 G_SEND_INTERVAL: Final = 0.2
