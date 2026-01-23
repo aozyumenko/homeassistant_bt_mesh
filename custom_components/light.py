@@ -39,6 +39,7 @@ from .entity import BtMeshEntity, ClassNotFoundError
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
     DEFAULT_LIGHT_BRIGHTNESS,
+    DEFAULT_LIGHT_TEMPERATURE,
     G_SEND_INTERVAL,
     G_TIMEOUT,
 )
@@ -138,7 +139,7 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
     _last_state: int | None = None
 
     async def query_model_state(self) -> any:
-        """Get LightLightness state"""
+        """Get LightLightness status."""
         client = self.app.elements[0][LightLightnessClient]
         try:
             return await client.get(
@@ -152,7 +153,7 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
         return None
 
     async def light_lightness_set(self, lightness:int, transition_time:float=None) -> None:
-        """Set LightLightness lightness"""
+        """Set LightLightness lightness."""
         try:
             client = self.app.elements[0][LightLightnessClient]
             result = await client.set(
@@ -170,6 +171,7 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
         self.invalidate_device_state()
 
     async def async_update(self) -> None:
+        """Update LightEntity state from latest LightLightness status."""
         if self.model_state is not None:
             if "remaining_time" in self.model_state and self.model_state.remaining_time > 0:
                 lightness = self.model_state.target_lightness
@@ -245,20 +247,21 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
         destination: Union[int, UUID],
         message: ParsedMeshMessage
     ):
-        """..."""
+        """Receive status reports from LightCTL model."""
         opcode_name = BtMeshOpcode.get(message.opcode).name.lower()
         match message.opcode:
             case LightCTLOpcode.LIGHT_CTL_STATUS:
                 super().receive_message(source, app_index, destination, message)
             case LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS:
-                self._attr_min_color_temp_kelvin = message[opcode].range_min
-                self._attr_max_color_temp_kelvin = message[opcode].range_max
+                self._attr_min_color_temp_kelvin = message[opcode_name].range_min
+                self._attr_max_color_temp_kelvin = message[opcode_name].range_max
             case _:
                 pass
 
     async def async_update(self) -> None:
+        """Update LightEntity state from latest LightCTL status."""
         if self.model_state is not None:
-            if "remaining_time" in state and self.model_state.remaining_time > 0:
+            if "remaining_time" in self.model_state and self.model_state.remaining_time > 0:
                 lightness = self.model_state.target_ctl_lightness
                 temperature = self.model_state.target_ctl_temperature
             else:
@@ -282,7 +285,7 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
                 self._flag_update_temperature_range = False
 
     async def query_model_state(self) -> any:
-        """Get LightCTL state"""
+        """Get LightCTL status."""
         client = self.app.elements[0][LightCTLClient]
         try:
             return await client.get(
@@ -296,7 +299,7 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
         return None
 
     async def light_ctl_temperature_range_get(self) -> any:
-        """Get LightCTL temperature range"""
+        """Get LightCTL temperature range."""
         try:
             client = self.app.elements[0][LightCTLClient]
             return await client.temperature_range_get(
@@ -354,15 +357,22 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
                     transition_time=transition_time
                 )
         else:
-            await self.generic_onoff_set(1,transition_time=transition_time)
+            await self.generic_onoff_set(1, transition_time=transition_time)
 
             # hack that allows you to use GenericOnOff instead of
             # LightCTL to turn on the light
-            if self._last_state:
+            if self._last_state is not None:
                 self.update_model_state(
                     Container(
-                        present_ctl_lightness=self._last_state[0],
+                        present_ctl_lightness=self._last_state[0] if self._last_state[0] > 0 else self.brightness_hass_to_btmesh(DEFAULT_LIGHT_BRIGHTNESS),
                         present_ctl_temperature=self._last_state[1],
+                    )
+                )
+            else:
+                self.update_model_state(
+                    Container(
+                        present_ctl_lightness= self.brightness_hass_to_btmesh(DEFAULT_LIGHT_BRIGHTNESS),
+                        present_ctl_temperature=DEFAULT_LIGHT_TEMPERATURE,
                     )
                 )
             self.invalidate_device_state()
@@ -408,7 +418,7 @@ class BtMeshLight_LightHSL(BtMeshLightEntity):
     _last_state: tuple[int, int, int] | None = None
 
     async def query_model_state(self) -> any:
-        """Get LightHSL state"""
+        """Get LightHSL state."""
         client = self.app.elements[0][LightHSLClient]
         try:
             return await client.target_get(
@@ -422,6 +432,7 @@ class BtMeshLight_LightHSL(BtMeshLightEntity):
         return None
 
     async def async_update(self) -> None:
+        """Update LightEntity state from latest LightHSL status."""
         if self.model_state is not None:
             self._attr_brightness = BtMeshLightEntity.brightness_btmesh_to_hass(self.model_state.hsl_lightness)
             self._attr_hs_color = BtMeshLightEntity.color_btmesh_to_hass(
