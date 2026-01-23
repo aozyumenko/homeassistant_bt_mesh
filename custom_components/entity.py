@@ -51,7 +51,6 @@ class BtMeshEntity(Entity):
 
     _lock: asyncio.Lock
     _task: asyncio.Task
-    _query_task: asyncio.Task
     _last_update: [float | None]
     _model_state: any
 
@@ -72,10 +71,10 @@ class BtMeshEntity(Entity):
             manufacturer=company[self.cfg_model.device.cid] \
                 if self.cfg_model.device.cid in company \
                     else f"{self.cfg_model.device.cid:04x}",
-            model=product[self.cfg_model.device.pid] \
-                if self.cfg_model.device.pid in product \
-                    else f"{self.cfg_model.device.pid:04x}",
-            model_id=f"{self.cfg_model.device.pid:04x}",
+            model=product[(self.cfg_model.device.vid, self.cfg_model.device.pid)] \
+                if (self.cfg_model.device.vid, self.cfg_model.device.pid) in product \
+                    else f"{self.cfg_model.device.vid:04x}:{self.cfg_model.device.pid:04x}",
+            model_id=f"{self.cfg_model.device.vid:04x}:{self.cfg_model.device.pid:04x}",
             sw_version=f"{self.cfg_model.device.vid:04x}",
         )
         self._attr_unique_id = self.cfg_model.unique_id
@@ -83,7 +82,6 @@ class BtMeshEntity(Entity):
 
         self._lock = asyncio.Lock()
         self._task = None
-        self._query_task = None
 
         self._last_update = None
         self._model_state = None
@@ -110,7 +108,8 @@ class BtMeshEntity(Entity):
         message: ParsedMeshMessage
     ):
         opcode_name = BtMeshOpcode.get(message.opcode).name.lower()
-        self.update_model_state_thr(message[opcode_name])
+        #self.update_model_state_thr(message[opcode_name])
+        self.update_model_state(message[opcode_name])
 
     @property
     def unicast_addr(self) -> int:
@@ -138,23 +137,23 @@ class BtMeshEntity(Entity):
     def update_model_state(self, state: any):
         self._last_update = time.time()
         self._model_state = state
-#        self.async_update_ha_state(True)
+        self.schedule_update_ha_state()
 
-    def update_model_state_thr(self, state: any):
-        async def _set_value_after_delay(state: any):
-            try:
-                _LOGGER.debug(f"_set_value_after_delay():  {self.unicast_addr:04x}.{self.property_id:04x} start")
-                await asyncio.sleep(self.update_threshold)
-                self.update_model_state(state)
-                _LOGGER.debug(f"Update model state {self.name}: {repr(self._model_state)} [{self._last_update:f}]")
-            except asyncio.CancelledError:
-                _LOGGER.debug(f"_set_value_after_delay():  {self.unicast_addr:04x}.{self.property_id:04x} cancel")
-                pass
-
-        if self._task is not None:
-            self._task.cancel()
-        self._task = self.app.loop.create_task(_set_value_after_delay(state))
-        _LOGGER.debug(f"update_model_state(): {self.unicast_addr:04x}, state={state}")
+#    def update_model_state_thr(self, state: any):
+#        async def _set_value_after_delay(state: any):
+#            try:
+#                _LOGGER.debug(f"_set_value_after_delay():  {self.unicast_addr:04x}.{self.property_id:04x} start")
+#                await asyncio.sleep(self.update_threshold)
+#                self.update_model_state(state)
+#                _LOGGER.debug(f"Update model state {self.name}: {repr(self._model_state)} [{self._last_update:f}]")
+#            except asyncio.CancelledError:
+#                _LOGGER.debug(f"_set_value_after_delay():  {self.unicast_addr:04x}.{self.property_id:04x} cancel")
+#                pass
+#
+#        if self._task is not None:
+#            self._task.cancel()
+#        self._task = self.app.loop.create_task(_set_value_after_delay(state))
+#        _LOGGER.debug(f"update_model_state(): {self.unicast_addr:04x}, state={state}")
 
     def _query_model_state(self):
         async def query_model_state_task():
@@ -165,9 +164,9 @@ class BtMeshEntity(Entity):
                     self.update_model_state(state)
 
         if not self.passive:
-            if self._query_task is None or self._query_task.done():
+            if not self._lock.locked():
                 _LOGGER.debug(f"Querye model state {self.name}")
-                self._query_task = self.app.loop.create_task(query_model_state_task())
+                self.app.hass.create_task(query_model_state_task())
 
     async def query_model_state(self) -> any:
         return None
