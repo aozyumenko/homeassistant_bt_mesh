@@ -200,7 +200,8 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
             case SensorOpcode.SENSOR_STATUS:
                 for property in message[opcode_name]:
                     if property.sensor_setting_property_id == self.property_id:
-                        self.update_model_state_thr(property)
+                        #self.update_model_state_thr(property)
+                        self.update_model_state(property)
                         break
             case _:
                 pass
