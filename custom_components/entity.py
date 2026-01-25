@@ -1,7 +1,13 @@
+"""Support for BT MESH entities."""
+from __future__ import annotations
+
 import asyncio
 import time
 
-from bluetooth_numbers import company
+from typing import Union
+from uuid import UUID
+
+from bluetooth_mesh.utils import ParsedMeshMessage
 
 from homeassistant.helpers.entity import Entity, DeviceInfo
 from homeassistant.helpers.dispatcher import (
@@ -13,13 +19,7 @@ from bt_mesh_ctrl import BtMeshModelId, BtMeshOpcode
 from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 from bt_mesh_ctrl.product import product
 
-from construct import Container
-#from bluetooth_mesh.models.base import Model
-from typing import Type         # ?????
-from typing import Union
-from uuid import UUID
-from bluetooth_mesh.utils import ParsedMeshMessage
-
+from bluetooth_numbers import company
 
 from .application import BtMeshApplication
 from .const import (
@@ -44,7 +44,7 @@ class BtMeshEntity(Entity):
     app: BtMeshApplication
     cfg_model: MeshCfgModel
     subs: list[([type], [int])]
-    update_threshold = 0.5      # FIXME: to const
+    #update_threshold = 0.5
     invalidate_timeout: float = G_MESH_CACHE_INVALIDATE_TIMEOUT
     update_timeout: float = G_MESH_CACHE_UPDATE_TIMEOUT
     passive: bool
@@ -71,10 +71,10 @@ class BtMeshEntity(Entity):
             manufacturer=company[self.cfg_model.device.cid] \
                 if self.cfg_model.device.cid in company \
                     else f"{self.cfg_model.device.cid:04x}",
-            model=product[(self.cfg_model.device.vid, self.cfg_model.device.pid)] \
-                if (self.cfg_model.device.vid, self.cfg_model.device.pid) in product \
-                    else f"{self.cfg_model.device.vid:04x}:{self.cfg_model.device.pid:04x}",
-            model_id=f"{self.cfg_model.device.vid:04x}:{self.cfg_model.device.pid:04x}",
+            model=product[(self.cfg_model.device.cid, self.cfg_model.device.pid)] \
+                if (self.cfg_model.device.cid, self.cfg_model.device.pid) in product \
+                    else f"{self.cfg_model.device.cid:04x}:{self.cfg_model.device.pid:04x}",
+            model_id=f"{self.cfg_model.device.cid:04x}:{self.cfg_model.device.pid:04x}",
             sw_version=f"{self.cfg_model.device.vid:04x}",
         )
         self._attr_unique_id = self.cfg_model.unique_id
@@ -113,28 +113,37 @@ class BtMeshEntity(Entity):
 
     @property
     def unicast_addr(self) -> int:
+        """Bt mesh entity unicast address"""
         return self.cfg_model.unicast_addr
 
     @property
     def app_key(self) -> int:
+        """Bt mesh entity application key index"""
         return self.cfg_model.app_key
 
     @property
     def model_id(self) -> BtMeshModelId:
+        """Bt mesh entity Model Id"""
         return self.cfg_model.model_id
 
     @property
     def model_state(self) -> any:
+        """Model state with cache."""
         if self._last_update is not None and (self._last_update + self.invalidate_timeout) >= time.time():
             valid = (self._last_update + self.update_timeout) >= time.time()
             if not valid and not self.passive:
                 self._query_model_state()
+#            if self.name == "00fc-LightCTLServer":
+#                _LOGGER.debug(f"Get moled state: {self.name}: {self._model_state}")
             return self._model_state
 
         self._query_model_state()
         return None
 
     def update_model_state(self, state: any):
+        """Update Bt mesh entity model state."""
+#        if self.name == "00fc-LightCTLServer":
+#            _LOGGER.debug(f"Update model state {self.name}: {state}")
         self._last_update = time.time()
         self._model_state = state
         self.schedule_update_ha_state()
@@ -159,20 +168,23 @@ class BtMeshEntity(Entity):
         async def query_model_state_task():
             async with self._lock:
                 state = await self.query_model_state()
-                _LOGGER.debug(f"Get {self.name} state: {repr(state)} [{time.time():f}]")
+#                _LOGGER.debug(f"Get {self.name} state: {repr(state)} [{time.time():f}]")
                 if state is not None:
                     self.update_model_state(state)
 
         if not self.passive:
             if not self._lock.locked():
-                _LOGGER.debug(f"Querye model state {self.name}")
+#                _LOGGER.debug(f"Querye model state {self.name}")
                 self.app.hass.create_task(query_model_state_task())
+#        else:
+#            _LOGGER.debug(f"{self.name} is passive, ignore query")
+
 
     async def query_model_state(self) -> any:
         return None
 
     def invalidate_model_state(self):
-        _LOGGER.debug(f"Invalidate model state {self.name}")
+#        _LOGGER.debug(f"Invalidate model state {self.name}")
         self._last_update = time.time() - self.update_timeout
         self._query_model_state()
 
