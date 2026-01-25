@@ -1,29 +1,13 @@
 """BT Mesh Client Application"""
 from __future__ import annotations
 
-
 import asyncio
-#import time
-#from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from bluetooth_mesh.application import Application, Element, Capabilities
 from bluetooth_mesh.messages.config import GATTNamespaceDescriptor
-from bluetooth_mesh.messages.generic.onoff import GenericOnOffOpcode
-from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
-from bluetooth_mesh.messages.light.lightness import LightLightnessOpcode
-from bluetooth_mesh.messages.light.ctl import LightCTLOpcode
-from bluetooth_mesh.messages.light.hsl import LightHSLOpcode
-from bluetooth_mesh.messages.sensor import SensorOpcode, SensorSetupOpcode
-from bluetooth_mesh.messages.vendor.thermostat import (
-    ThermostatOpcode,
-    ThermostatSubOpcode,
-    ThermostatMode,
-    ThermostatStatusCode
-)
-
 from bluetooth_mesh.models import ConfigClient, HealthClient
 from bluetooth_mesh.models.generic.onoff import GenericOnOffClient
 from bluetooth_mesh.models.generic.level import GenericLevelClient
@@ -37,9 +21,23 @@ from bluetooth_mesh.models.light.ctl import LightCTLClient
 from bluetooth_mesh.models.light.hsl import LightHSLClient
 from bluetooth_mesh.models.vendor.thermostat import ThermostatClient
 from bluetooth_mesh.models.time import TimeServer, TimeSetupServer
+from bluetooth_mesh.messages.generic.onoff import GenericOnOffOpcode
+from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
+from bluetooth_mesh.messages.light.lightness import LightLightnessOpcode
+from bluetooth_mesh.messages.light.ctl import LightCTLOpcode
+from bluetooth_mesh.messages.light.hsl import LightHSLOpcode
+from bluetooth_mesh.messages.sensor import SensorOpcode, SensorSetupOpcode
+from bluetooth_mesh.messages.vendor.thermostat import (
+    ThermostatOpcode,
+    ThermostatSubOpcode,
+    ThermostatMode,
+    ThermostatStatusCode,
+)
+from bluetooth_mesh.messages.properties import PropertyID
 
 from bt_mesh_ctrl import BtMeshModelId, BtMeshOpcode
 
+from .time_server import TimeServerMixin
 from .const import (
     DEFAULT_DBUS_APP_PATH,
     G_SEND_INTERVAL,
@@ -48,9 +46,6 @@ from .const import (
     G_UNACK_INTERVAL,
     BT_MESH_MSG,
 )
-
-from .time_server import TimeServerMixin
-#from .entity import BtMeshEntity
 
 
 import logging
@@ -132,6 +127,7 @@ class BtMeshApplication(Application, TimeServerMixin):
         (LightCTLClient, LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS),
         (LightHSLClient, LightHSLOpcode.LIGHT_HSL_STATUS),
         (LightHSLClient, LightHSLOpcode.LIGHT_HSL_TARGET_STATUS),
+        (ThermostatClient, ThermostatOpcode.VENDOR_THERMOSTAT),
     )
 
 
@@ -200,6 +196,7 @@ class BtMeshApplication(Application, TimeServerMixin):
         destination: Union[int, UUID],
         message: ParsedMeshMessage
     ):
+        """Passing messages to Bt mesh entities."""
         async_dispatcher_send(
             self.hass,
             BT_MESH_MSG.format(source, message.opcode),
@@ -209,98 +206,275 @@ class BtMeshApplication(Application, TimeServerMixin):
             message
         )
 
-
-    async def sensor_descriptor_get(self, address, app_index, passive) -> any:
-        client = self.elements[0][SensorClient]
-        (cache_valid, result) = self.cache.get(address, SensorOpcode.SENSOR_DESCRIPTOR_STATUS)
-        if not cache_valid:
+    def bluetooth_mesh_get(query_func):
+        """Decorator for getting the state of a Bt mesh model with a global lock,
+           preventing a large number of simultaneous requests."""
+        async def wrapper(*args, **kwargs):
+            self = args[0]
             async with self._lock_get:
                 try:
-                    result = await client.descriptor_get(
-                        address,
-                        app_index=app_index,
-                        send_interval=G_SEND_INTERVAL,
-                        timeout=G_TIMEOUT)
+                    return await query_func(*args, **kwargs)
                 except asyncio.TimeoutError:
                     pass
-        #_LOGGER.debug("sensor_descriptor_get() result = %s" % (repr(result)))
-        return result
+            return None
+        return wrapper
+
+    def bluetooth_mesh_set(query_func):
+        """Decorator for setting the state of a Bt grid model
+           with handling of the Timeout exception."""
+        async def wrapper(*args, **kwargs):
+            self = args[0]
+            try:
+                return await query_func(*args, **kwargs)
+            except asyncio.TimeoutError:
+                pass
+            return None
+        return wrapper
+
+
+    # GenericOnOff client
+    @bluetooth_mesh_get
+    async def generic_onoff_get(self, destination: int, app_index: int) -> any:
+        client = self.elements[0][GenericOnOffClient]
+        return await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_set
+    async def generic_onoff_set(
+        self,
+        destination: int,
+        app_index: int,
+        onoff: int,
+        transition_time: float=None
+    ) -> any:
+        """Set GenericOnOff state"""
+        client = self.elements[0][GenericOnOffClient]
+        return await client.set(
+            destination=destination,
+            app_index=app_index,
+            onoff=onoff,
+            delay=None if transition_time is None else 0,
+            transition_time=transition_time,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    # LightLightness
+    @bluetooth_mesh_get
+    async def light_lightness_get(self, destination: int, app_index: int) -> any:
+        """Get LightLightness state"""
+        client = self.elements[0][LightLightnessClient]
+        return await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_set
+    async def light_lightness_set(
+        self,
+        destination: int,
+        app_index: int,
+        lightness: int,
+        transition_time: float=None
+    ) -> any:
+        """Set LightLightness lightness"""
+        client = self.elements[0][LightLightnessClient]
+        return await client.set(
+            destination=destination,
+            app_index=app_index,
+            lightness=lightness,
+            delay=None if transition_time is None else 0,
+            transition_time=transition_time,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    # LightCTL
+    @bluetooth_mesh_get
+    async def light_ctl_get(self, destination: int, app_index: int) -> any:
+        """Get LightCTL state"""
+        client = self.elements[0][LightCTLClient]
+        return await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_get
+    async def light_ctl_temperature_range_get(self, destination: int, app_index: int) -> any:
+        """Get LightCTL temperature range"""
+        client = self.elements[0][LightCTLClient]
+        return await client.temperature_range_get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_set
+    async def light_ctl_set(
+        self,
+        destination: int,
+        app_index: int,
+        ctl_lightness: int,
+        ctl_temperature: int,
+        transition_time: float=None
+    ) -> any:
+        """Set LightCTL state"""
+        try:
+            client = self.elements[0][LightCTLClient]
+            return await client.set(
+                destination=destination,
+                app_index=app_index,
+                ctl_lightness=ctl_lightness,
+                ctl_temperature=ctl_temperature,
+                ctl_delta_uv=0,
+                delay=None if transition_time is None else 0,
+                transition_time=transition_time,
+                send_interval=G_SEND_INTERVAL,
+                timeout=G_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            pass
+        return None
+
+    # LightHSL
+    @bluetooth_mesh_get
+    async def light_hsl_get(self, destination: int, app_index: int) -> any:
+        """Get LightHSL state"""
+        client = self.elements[0][LightHSLClient]
+        return await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_get
+    async def light_hsl_get_target(self, destination: int, app_index: int) -> any:
+        """Get LightHSL state"""
+        client = self.elements[0][LightHSLClient]
+        return await client.target_get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_set
+    async def light_hsl_set(
+        self,
+        destination: int,
+        app_index: int,
+        hsl_lightness: int,
+        hsl_hue: int,
+        hsl_saturation: int,
+        transition_time: float=None
+    ) -> any:
+        """Set LightHSL lightness, hue and saturation"""
+        client = self.elements[0][LightHSLClient]
+        return await client.set(
+            destination=destination,
+            app_index=app_index,
+            hsl_lightness=hsl_lightness,
+            hsl_hue=hsl_hue,
+            hsl_saturation=hsl_saturation,
+            delay=None if transition_time is None else 0,
+            transition_time=transition_time,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    # GenericBattery
+    @bluetooth_mesh_get
+    async def generic_battery_get(self, destination: int, app_index: int) -> any:
+        """Get GenericBattery state"""
+        client = self.elements[0][GenericBatteryClient]
+        return await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    # Sensor
+    @bluetooth_mesh_get
+    async def sensor_descriptor_get(self, destination: int, app_index: int) -> any:
+        client = self.elements[0][SensorClient]
+        return await client.descriptor_get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_get
+    async def sensor_get(
+        self,
+        destination: int,
+        app_index: int,
+        property_id: PropertyID
+    ) -> any:
+        client = self.elements[0][SensorClient]
+        result = await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+        if result:
+            for property in result:
+                if property_id == property.sensor_setting_property_id:
+                    return property
+        return None
 
 
     # Vendor Thermostat
-#    def thermostat_init_receive_status(self) -> None:
-#        def receive_status(
-#            _source: int,
-#            _app_index: int,
-#            _destination: Union[int, UUID],
-#            message: ParsedMeshMessage,
-#        ):
-#            vendor_message = message['vendor_thermostat']
-#            if vendor_message.subopcode == ThermostatSubOpcode.THERMOSTAT_STATUS:
-#                if vendor_message.thermostat_status.status_code == ThermostatStatusCode.GOOD:
-#                    self.cache_update(
-#                        _source,
-#                        BtMeshModelId.ThermostatServer,
-#                        vendor_message.thermostat_status,
-#                        extra_key=ThermostatSubOpcode.THERMOSTAT_STATUS
-#                )
-#            elif vendor_message.subopcode == ThermostatSubOpcode.THERMOSTAT_RANGE_STATUS:
-#                self.cache_update(
-#                    _source,
-#                    BtMeshModelId.ThermostatServer,
-#                    vendor_message.thermostat_range_status,
-#                    extra_key=ThermostatSubOpcode.THERMOSTAT_RANGE_STATUS
-#                )
+    @bluetooth_mesh_get
+    async def thermostat_get(self, destination: int, app_index: int) -> any:
+        """Get Vendor Thermostat state."""
+        client = self.elements[0][ThermostatClient]
+        return await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
 
-#        client = self.elements[0][ThermostatClient]
-#        client.app_message_callbacks[ThermostatOpcode.VENDOR_THERMOSTAT].add(receive_status)
+    @bluetooth_mesh_get
+    async def thermostat_range_get(self, destination: int, app_index: int) -> any:
+        """Get Vendor Thermostat themperature range."""
+        client = self.elements[0][ThermostatClient]
+        return await client.range_get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
 
-#    async def thermostat_get(self, address, app_index) -> any:
-#        """Get Vendor Thermostat state"""
-#        client = self.elements[0][ThermostatClient]
-#        return await self.cache_proxy(
-#            address,
-#            BtMeshModelId.ThermostatServer,
-#            client.get(
-#                [address],
-#                app_index=app_index,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT,
-#            ),
-#            extra_key=ThermostatSubOpcode.THERMOSTAT_STATUS
-#        )
-
-#    async def thermostat_range_get(self, address, app_index) -> any:
-#        """Get Vendor Thermostat range"""
-#        client = self.elements[0][ThermostatClient]
-#        return await self.cache_proxy(
-#            address,
-#            BtMeshModelId.ThermostatServer,
-#            client.range_get(
-#                [address],
-#                app_index=app_index,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT,
-#            ),
-#            extra_key=ThermostatSubOpcode.THERMOSTAT_RANGE_STATUS
-#        )
-
-#    async def thermostat_set(self, address, app_index, onoff, temperature) -> None:
-#        """Get Vendor Thermostat state"""
-#        client = self.elements[0][ThermostatClient]
-#
-#        async with self._lock:
-#            await client.set(
-#                [address],
-#                app_index=app_index,
-#                onoff=onoff,
-#                mode=ThermostatMode.MANUAL,
-#                temperature=temperature,
-#                send_interval=G_SEND_INTERVAL,
-#                timeout=G_TIMEOUT,
-#            )
-#            self.cache_invalidate(
-#                address,
-#                BtMeshModelId.ThermostatServer,
-#                extra_key=ThermostatSubOpcode.THERMOSTAT_STATUS
-#            )
+    @bluetooth_mesh_set
+    async def thermostat_set(
+        self,
+        destination: int,
+        app_index: int,
+        onoff: int,
+        temperature: float
+    ) -> any:
+        """Set Vendor Thermostat state."""
+        client = self.elements[0][ThermostatClient]
+        return await client.set(
+            destination=destination,
+            app_index=app_index,
+            onoff=onoff,
+            mode=ThermostatMode.MANUAL,
+            temperature=temperature,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
