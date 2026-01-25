@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 
 from construct import Container
 
@@ -19,6 +18,7 @@ from bluetooth_mesh.models.generic.onoff import GenericOnOffClient
 from bt_mesh_ctrl import BtMeshModelId
 from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 
+from .application import BtMeshApplication
 from .entity import BtMeshEntity
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
@@ -44,7 +44,6 @@ async def async_setup_entry(
         cfg_model: MeshCfgModel,
         passive: bool
     ) -> None:
-#        _LOGGER.debug(f"async_add_switch(): uuid={cfg_model.device.uuid}, model_id={cfg_model.model_id}, addr={cfg_model.unicast_addr:04x}, app_key={cfg_model.app_key}")
         add_entities([BtMeshSwitch_GenericOnOff(app, cfg_model, passive)])
 
     config_entry.async_on_unload(
@@ -79,22 +78,17 @@ class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
 
     async def query_model_state(self) -> any:
         """Query GenericOnOff state."""
-        try:
-            client = self.app.elements[0][GenericOnOffClient]
-            return await client.get(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT
-            )
-        except asyncio.TimeoutError:
-            pass
-        return None
+        return await self.app.generic_onoff_get(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+        )
 
     async def async_update(self):
         """Extract switch state from GenericOnOff model state."""
         if self.model_state is not None:
-            if "target_onoff" in self.model_state and "remaining_time" in self.model_state and self.model_state.remaining_time > 0:
+            if "target_onoff" in self.model_state and \
+                    "remaining_time" in self.model_state and \
+                    self.model_state.remaining_time > 0:
                 self._attr_is_on = self.model_state.target_onoff
             else:
                 self._attr_is_on = self.model_state.present_onoff
@@ -103,24 +97,18 @@ class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
 
         self._attr_available = self._attr_is_on is not None
 
-    async def generic_onoff_set(self, state:int, transition_time:float=None) -> None:
+    async def generic_onoff_set(self, onoff:int, transition_time:float=None) -> None:
         """Set GenericOnOff state"""
-        try:
-            client = self.app.elements[0][GenericOnOffClient]
-            result = await client.set(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                onoff=state,
-                delay=None if transition_time is None else 0,
-                transition_time=transition_time,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT,
-            )
+        result = await self.app.generic_onoff_set(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+            onoff=onoff,
+            transition_time=transition_time,
+        )
+        if result is not None:
             self.update_model_state(result)
-            _LOGGER.debug(f"Set GenericOnOff state {self.unicast_addr:04x}: result {repr(result)} [{time.time():f}]")
-        except asyncio.TimeoutError:
-            self.update_model_state(Container(present_onoff=1 if state else 0))
-            _LOGGER.debug(f"Set GenericOnOff state {self.unicast_addr:04x}: result Timeout [{time.time():f}]")
+        else:
+            self.update_model_state(Container(present_onoff=1 if onoff else 0))
         self.invalidate_device_state()
 
     async def async_turn_on(self, **kwargs):
