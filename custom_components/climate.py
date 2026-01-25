@@ -1,31 +1,49 @@
 """BT Mesh Thermostat."""
 from __future__ import annotations
 
-#import asyncio
+import asyncio
+
+from construct import Container
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-#from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateEntity
-#from homeassistant.components.climate.const import (
-#    ClimateEntityFeature,
-#    HVACAction,
-#    HVACMode,
-#)
-#from homeassistant.const import (
-#    ATTR_TEMPERATURE,
-#    PRECISION_TENTHS,
-#    UnitOfTemperature,
-#)
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.components.climate import ClimateEntity
+from homeassistant.components.climate.const import (
+    HVACMode,
+    ClimateEntityFeature,
+    HVACAction,
+    ATTR_HVAC_MODE,
+)
+from homeassistant.const import (
+    Platform,
+    ATTR_TEMPERATURE,
+    UnitOfTemperature,
+)
 
-#from .entity import BtMeshEntity
-#from .const import DOMAIN, BT_MESH_APPLICATION, BT_MESH_CFGCLIENT_CONF
-#from .bt_mesh import BtMeshModelId
-#from .mesh_cfgclient_conf import ELEMENT_MAIN
+from bluetooth_mesh.models.vendor.thermostat import ThermostatClient
+from bluetooth_mesh.messages.vendor.thermostat import (
+    ThermostatOpcode,
+    ThermostatSubOpcode,
+    ThermostatMode,
+    ThermostatStatusCode,
+)
 
+from bt_mesh_ctrl import BtMeshModelId
 
-#import logging
-#_LOGGER = logging.getLogger(__name__)
+from .application import BtMeshApplication
+from .entity import BtMeshEntity
+from .const import (
+    BT_MESH_DISCOVERY_ENTITY_NEW,
+    BT_MESH_MSG,
+    G_SEND_INTERVAL,
+    G_TIMEOUT,
+)
+
+import logging
+_LOGGER = logging.getLogger(__name__)
+
 
 
 async def async_setup_entry(
@@ -33,185 +51,185 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up BT Mesh Climate entry."""
-    pass
-#    entry_data = hass.data[DOMAIN][config_entry.entry_id]
-#    application = entry_data[BT_MESH_APPLICATION]
-#    mesh_cfgclient_conf = entry_data[BT_MESH_CFGCLIENT_CONF]
+    """Set up BT Mesh Climate entity."""
 
-#    entities = []
-#    devices = mesh_cfgclient_conf.devices
+    @callback
+    def async_add_climate(
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        passive: bool
+    ) -> None:
+#        _LOGGER.debug(f"async_add_climate(): uuid={cfg_model.device.uuid}, model_id={cfg_model.model_id}, addr={cfg_model.unicast_addr:04x}, app_key={cfg_model.app_key}")
+        add_entities([BtMeshClimate_Thermostat(app, cfg_model, passive)])
 
-#    for device in devices:
-#        try:
-#            device_unicat_addr = device['unicastAddress']
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(Platform.CLIMATE),
+            async_add_climate,
+        )
+    )
 
-            # BT Mesh Thermostat Server
-#            for thermostat in device['models'][BtMeshModelId.ThermostatServer]:
-#                element_idx = thermostat[ELEMENT_MAIN]
-#                element_unicast_addr = device_unicat_addr + element_idx
-#                app_key = device['app_keys'][element_idx][BtMeshModelId.ThermostatServer]
-#                entities.append(
-#                     BtMeshClimate_Thermostat(
-#                        application=application,
-#                        uuid=device['UUID'],
-#                        cid=device['cid'],
-#                        pid=device['pid'],
-#                        vid=device['vid'],
-#                        addr=element_unicast_addr,
-#                        model_id=BtMeshModelId.ThermostatServer,
-#                        app_index=app_key
-#                    )
-#                )
-#        except KeyError:
-#            continue
-
-#    add_entities(entities)
-
-#    application.thermostat_init_receive_status()
-
-#    return True
+    return True
 
 
-#class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
-#    """Representation of an Bluetooth Mesh Vendor Thermostat."""
+class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
+    """Representation of an Bluetooth Mesh Vendor Thermostat."""
 
-#    _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
-#    _attr_supported_features = (
-#        ClimateEntityFeature.TARGET_TEMPERATURE
-#        | ClimateEntityFeature.TURN_OFF
-#        | ClimateEntityFeature.TURN_ON
-#    )
-#    _attr_target_temperature_step = 1.0
-#    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    status_opcodes = (
+        ThermostatOpcode.VENDOR_THERMOSTAT,
+    )
 
-#    _state = None
-#    _range = None
+    _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
+    _attr_supported_features = (
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TURN_OFF
+        | ClimateEntityFeature.TURN_ON
+    )
+    _attr_target_temperature_step = 1.0
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
 
-#    @property
-#    def available(self) -> bool:
-#        """Return True if entity is available."""
-#        return self._state is not None and self._range is not None
+    _flag_update_range = True
 
-#    @property
-#    def current_temperature(self) -> float | None:
-#        """Return the current temperature."""
-#        if self._state is not None:
-#            return self._state.present_temperature
-#        return None
 
-#    @property
-#    def target_temperature(self) -> float | None:
-#        """Return the temperature we try to reach."""
-#        if self._state is not None:
-#            return self._state.target_temperature
-#        return None
+    def __init__(
+        self,
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        passive: bool
+    ) -> None:
+        if cfg_model.model_id != BtMeshModelId.ThermostatServer:
+            raise ValueError("cfg_model.model_id must be ThermostatServer")
 
-#    @property
-#    def min_temp(self) -> float:
-#        """Return the lowbound target temperature we try to reach."""
-#        if self._range is None:
-#            return 40
-#        return self._range.min_temperature
+        BtMeshEntity.__init__(self, app, cfg_model, passive)
+        self._attr_available = False
 
-#    @property
-#    def max_temp(self) -> float:
-#        """Return the highbound target temperature we try to reach."""
-#        if self._range is None:
-#            return 0
-#        return self._range.max_temperature
+    def receive_message(
+        self,
+        source: int,
+        app_index: int,
+        destination: Union[int, UUID],
+        message: ParsedMeshMessage
+    ):
+        """Receive status reports from Vendor Thermostat model."""
+        vendor_message = message['vendor_thermostat']
+        match vendor_message.subopcode:
+            case ThermostatSubOpcode.THERMOSTAT_STATUS:
+                if vendor_message.thermostat_status.status_code == ThermostatStatusCode.GOOD:
+                    #self.update_model_state_thr(vendor_message.thermostat_status)
+                    self.update_model_state(vendor_message.thermostat_status)
+            case ThermostatSubOpcode.THERMOSTAT_RANGE_STATUS:
+                self._attr_min_temp = vendor_message.thermostat_range_status.min_temperature
+                self._attr_max_temp = vendor_message.thermostat_range_status.max_temperature
+            case _:
+                pass
 
-#    @property
-#    def hvac_action(self) -> HVACAction:
-#        """Return the current state of the thermostat."""
-#        if self._state is None:
-#            return HVACAction.OFF
 
-#        onoff_status = self._state['onoff_status']
-#        heater_status = self._state['heater_status']
-#        if not onoff_status:
-#            return HVACAction.OFF
-#        if heater_status:
-#            return HVACAction.HEATING
-#        return HVACAction.IDLE
+    async def query_model_state(self) -> any:
+        """Query Vendor Thermostat state."""
+        if self._flag_update_range:
+            result = await self.app.thermostat_range_get(
+                destination=self.unicast_addr,
+                app_index=self.app_key,
+            )
+            if result is not None:
+                self._attr_min_temp = result.min_temperature
+                self._attr_max_temp = result.max_temperature
+                self._flag_update_range = False
 
-#    @property
-#    def hvac_mode(self) -> HVACMode:
-#        """Return the current state of the thermostat."""
+        return await self.app.thermostat_get(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+        )
 
-#        if self._state is None:
-#            return HVACMode.OFF
+    async def thermostat_set(self, onoff: int, temperature: float) -> any:
+        if self.model_state is None:
+            return
 
-#        onoff_status = self._state['onoff_status']
-#        if not onoff_status:
-#            return HVACMode.OFF
-#        return HVACMode.HEAT
+        result = await self.app.thermostat_set(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+            onoff=onoff,
+            temperature=temperature
+        )
+        if result is not None:
+            self.update_model_state(result)
+        else:
+            self.update_model_state(
+                Container(
+                    status_code=self.model_state.status_code,
+                    heater_status=self.model_state.heater_status,
+                    mode=self.model_state.mode,
+                    onoff_status=onoff,
+                    target_temperature=temperature,
+                    present_temperature=self.model_state.present_temperature
+                )
+            )
 
-#    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-#        if self._state is None:
-#            return
+    async def async_update(self):
+        """Update the data from the thermostat."""
 
-#        onoff_status = self._state.onoff_status
-#        temperature = self._state['target_temperature']
+        if self.model_state is not None:
+            self._attr_current_temperature = self.model_state.present_temperature
+            self._attr_target_temperature = self.model_state.target_temperature
+            if self.model_state.onoff_status:
+                if self.model_state.heater_status:
+                    self._attr_hvac_action = HVACAction.HEATING
+                else:
+                    self._attr_hvac_action = HVACAction.IDLE
+                self._attr_hvac_mode = HVACMode.HEAT
+            else:
+                self._attr_hvac_action = HVACAction.OFF
+                self._attr_hvac_mode = HVACMode.OFF
+            self._attr_available = hasattr(self, "_attr_min_temp") and \
+                hasattr(self, "_attr_max_temp")
+        else:
+            self._attr_current_temperature = None
+            self._attr_target_temperature = None
+            self._attr_hvac_action = None
+            self._attr_hvac_mode = None
+            self._attr_available = False
 
-#        if hvac_mode == HVACMode.OFF:
-#            onoff_status = False
-#        elif hvac_mode == HVACMode.HEAT:
-#            onoff_status = True
 
-#        await self.application.thermostat_set(
-#                self.unicast_addr,
-#                self.app_index,
-#                onoff_status,
-#                temperature
-#            )
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        """Set new target operation mode."""
+        if self.model_state:
+            match hvac_mode:
+                case HVACMode.HEAT:
+                    onoff = 1
+                case HVACMode.OFF:
+                    onoff = 0
+                case _:
+                    onoff = 0
 
-#    async def async_turn_off(self) -> None:
-#        """Turn thermostat off."""
-#        if self._state is None:
-#            return
+            await self.thermostat_set(
+                onoff=onoff,
+                temperature=self.model_state.target_temperature
+            )
 
-#        temperature = self._state.target_temperature
-#        await self.application.thermostat_set(
-#            self.unicast_addr,
-#            self.app_index,
-#            False,
-#            temperature
-#        )
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        """Set new target temperature (and operation mode if set)."""
+        if self.model_state and \
+                (ATTR_HVAC_MODE in kwargs or ATTR_TEMPERATURE in kwargs):
 
-#    async def async_turn_on(self) -> None:
-#        """Turn thermostat on."""
-#        if self._state is None:
-#            return
+            if ATTR_HVAC_MODE in kwargs:
+                match kwargs[ATTR_HVAC_MODE]:
+                    case HVACMode.HEAT:
+                        onoff = 1
+                    case HVACMode.OFF:
+                        onoff = 0
+                    case _:
+                        onoff = self.model_state.onoff_status
+            else:
+                onoff = self.model_state.onoff_status
 
-#        temperature = self._state.target_temperature
-#        await self.application.thermostat_set(
-#            self.unicast_addr,
-#            self.app_index,
-#            True,
-#            temperature
-#        )
 
-#    async def async_set_temperature(self, **kwargs):
-#        """Set new target temperature."""
-#        if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None or self._state is None:
-#            return
-#
-#        onoff_status = self._state['onoff_status']
-#        await self.application.thermostat_set(
-#            self.unicast_addr,
-#            self.app_index,
-#            onoff_status,
-#            temperature
-#        )
+            if ATTR_TEMPERATURE in kwargs:
+                temperature = kwargs[ATTR_TEMPERATURE]
+            else:
+                temperature = self.model_state.target_temperature
 
-#    async def async_update(self):
-#        """Update the data from the thermostat."""
-#        self._range = await self.application.thermostat_range_get(
-#            self.unicast_addr,
-#            self.app_index
-#        )
-#        self._state = await self.application.thermostat_get(
-#            self.unicast_addr,
-#            self.app_index
-#        )
+            await self.thermostat_set(
+                onoff=onoff,
+                temperature=temperature
+            )
