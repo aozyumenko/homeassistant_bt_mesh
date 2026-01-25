@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import asyncio
+
 from construct import Container
 
 from bluetooth_mesh.models.generic.onoff import GenericOnOffClient
@@ -32,16 +33,14 @@ from homeassistant.components.light import (
 from homeassistant.const import Platform
 
 from bt_mesh_ctrl import BtMeshModelId, BtMeshOpcode
-#from bt_mesh_ctrl import BtMeshModelId, BtSensorAttrPropertyId
 from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 
+from .application import BtMeshApplication
 from .entity import BtMeshEntity, ClassNotFoundError
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
     DEFAULT_LIGHT_BRIGHTNESS,
     DEFAULT_LIGHT_TEMPERATURE,
-    G_SEND_INTERVAL,
-    G_TIMEOUT,
 )
 
 import logging
@@ -62,7 +61,6 @@ async def async_setup_entry(
         cfg_model: MeshCfgModel,
         passive: bool
     ) -> None:
-#        _LOGGER.debug(f"async_add_light(): uuid={cfg_model.device.uuid}, model_id={cfg_model.model_id}, addr={cfg_model.unicast_addr:04x}, app_key={cfg_model.app_key}")
         try:
             add_entities([BtMeshLightEntityFactory.get(cfg_model.model_id)(app, cfg_model, passive)])
         except ClassNotFoundError as e:
@@ -106,21 +104,6 @@ class BtMeshLightEntity(BtMeshEntity, LightEntity):
             math.ceil(saturation * 100.0 / 65535.0)
         ]
 
-    async def generic_onoff_set(self, state:int, transition_time:float=None) -> None:
-        """Set GenericOnOff state"""
-        try:
-            client = self.app.elements[0][GenericOnOffClient]
-            await client.set(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                onoff=state,
-                delay=None if transition_time is None else 0,
-                transition_time=transition_time,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            pass
 
 class BtMeshLight_LightLightness(BtMeshLightEntity):
     """Representation of a BT Mesh LightLightness."""
@@ -139,39 +122,28 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
     _last_state: int | None = None
 
     async def query_model_state(self) -> any:
-        """Get LightLightness status."""
-        client = self.app.elements[0][LightLightnessClient]
-        try:
-            return await client.get(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            pass
-        return None
+        """Get LightLightness state."""
+        return await self.app.light_lightness_get(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+        )
 
     async def light_lightness_set(self, lightness:int, transition_time:float=None) -> None:
         """Set LightLightness lightness."""
-        try:
-            client = self.app.elements[0][LightLightnessClient]
-            result = await client.set(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                lightness=lightness,
-                delay=None if transition_time is None else 0,
-                transition_time=transition_time,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT,
-            )
+        result = await self.app.light_lightness_set(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+            lightness=lightness,
+            transition_time=transition_time,
+        )
+        if result is not None:
             self.update_model_state(result)
-        except asyncio.TimeoutError:
+        else:
             self.update_model_state(Container(present_lightness=lightness))
         self.invalidate_device_state()
 
     async def async_update(self) -> None:
-        """Update LightEntity state from latest LightLightness status."""
+        """Update LightEntity state from latest LightLightness."""
         if self.model_state is not None:
             if "remaining_time" in self.model_state and self.model_state.remaining_time > 0:
                 lightness = self.model_state.target_lightness
@@ -189,7 +161,6 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
         transition_time = int(kwargs[ATTR_TRANSITION]) if ATTR_TRANSITION in kwargs else None
-#        _LOGGER.debug(f"async_turn_on(): transition_time = {transition_time}")
 
         if ATTR_BRIGHTNESS in kwargs:
             await self.light_lightness_set(
@@ -197,7 +168,12 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
                 transition_time=transition_time
             )
         else:
-            await self.generic_onoff_set(1, transition_time=transition_time)
+            await self.app.generic_onoff_set(
+                destination=self.unicast_addr,
+                app_index=self.app_key,
+                onoff=1,
+                transition_time=transition_time
+            )
 
             # hack that allows us to use GenericOnOff instead of
             # LightLighting to turn on the light
@@ -214,7 +190,6 @@ class BtMeshLight_LightLightness(BtMeshLightEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
         transition_time = int(kwargs[ATTR_TRANSITION]) if ATTR_TRANSITION in kwargs else None
-#        _LOGGER.debug(f"async_turn_off(): transition_time = {transition_time}")
         await self.light_lightness_set(0, transition_time=transition_time)
 
 
@@ -239,7 +214,6 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
     _last_state: tuple[int, int] | None = None
     _flag_update_temperature_range = True
 
-
     def receive_message(
         self,
         source: int,
@@ -258,8 +232,50 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
             case _:
                 pass
 
+    async def query_model_state(self) -> any:
+        """Get LightCTL state."""
+        if self._flag_update_temperature_range:
+            result = await self.app.light_ctl_temperature_range_get(
+                destination=self.unicast_addr,
+                app_index=self.app_key,
+            )
+            if result is not None:
+                self._attr_min_color_temp_kelvin = result.range_min
+                self._attr_max_color_temp_kelvin = result.range_max
+                self._flag_update_temperature_range = False
+
+        return await self.app.light_ctl_get(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+        )
+
+    async def light_ctl_set(
+        self,
+        lightness: int,
+        temperature: int,
+        transition_time: float=None
+    ) -> None:
+        """Set LightCTL state"""
+        result = await self.app.light_ctl_set(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+            ctl_lightness=lightness,
+            ctl_temperature=temperature,
+            transition_time=transition_time,
+        )
+        if result is not None:
+            self.update_model_state(result)
+        else:
+            self.update_model_state(
+                Container(
+                    present_ctl_lightness=lightness,
+                    present_ctl_temperature=temperature
+                )
+            )
+        self.invalidate_device_state()
+
     async def async_update(self) -> None:
-        """Update LightEntity state from latest LightCTL status."""
+        """Update LightEntity state from latest LightCTL."""
         if self.model_state is not None:
             if "remaining_time" in self.model_state and self.model_state.remaining_time > 0:
                 lightness = self.model_state.target_ctl_lightness
@@ -277,71 +293,10 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
         else:
             self._attr_available = False
 
-        if self._flag_update_temperature_range:
-            result = await self.light_ctl_temperature_range_get()
-            if result is not None:
-                self._attr_min_color_temp_kelvin = result.range_min
-                self._attr_max_color_temp_kelvin = result.range_max
-                self._flag_update_temperature_range = False
-
-    async def query_model_state(self) -> any:
-        """Get LightCTL status."""
-        client = self.app.elements[0][LightCTLClient]
-        try:
-            return await client.get(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            pass
-        return None
-
-    async def light_ctl_temperature_range_get(self) -> any:
-        """Get LightCTL temperature range."""
-        try:
-            client = self.app.elements[0][LightCTLClient]
-            return await client.temperature_range_get(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            pass
-        return None
-
-    async def light_ctl_set(self, lightness, temperature, transition_time=None) -> None:
-        """Set LightCTL state"""
-        try:
-            client = self.app.elements[0][LightCTLClient]
-            result = await client.set(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                ctl_lightness=lightness,
-                ctl_temperature=temperature,
-                ctl_delta_uv=0,
-                delay=None if transition_time is None else 0,
-                transition_time=transition_time,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT
-            )
-            self.update_model_state(result)
-        except asyncio.TimeoutError:
-            self.update_model_state(
-                Container(
-                    present_ctl_lightness=lightness,
-                    present_ctl_temperature=temperature
-                )
-            )
-        self.invalidate_device_state()
-
     async def async_turn_on(self, **kwargs):
         """Turn the specified light on."""
 
         transition_time = int(kwargs[ATTR_TRANSITION]) if ATTR_TRANSITION in kwargs else None
-#        _LOGGER.debug(f"async_turn_on(): transition_time = {transition_time}")
 
         if ATTR_BRIGHTNESS in kwargs or ATTR_COLOR_TEMP_KELVIN in kwargs:
             arg_brightness = kwargs.get(ATTR_BRIGHTNESS, self._attr_brightness)
@@ -352,26 +307,32 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
                 temperature = arg_color_temp_kelvin
 
                 await self.light_ctl_set(
-                    lightness,
-                    temperature,
+                    lightness=lightness,
+                    temperature=temperature,
                     transition_time=transition_time
                 )
         else:
-            await self.generic_onoff_set(1, transition_time=transition_time)
+            await self.app.generic_onoff_set(
+                destination=self.unicast_addr,
+                app_index=self.app_key,
+                onoff=1,
+                transition_time=transition_time)
 
             # hack that allows you to use GenericOnOff instead of
             # LightCTL to turn on the light
             if self._last_state is not None:
                 self.update_model_state(
                     Container(
-                        present_ctl_lightness=self._last_state[0] if self._last_state[0] > 0 else self.brightness_hass_to_btmesh(DEFAULT_LIGHT_BRIGHTNESS),
+                        present_ctl_lightness=self._last_state[0] \
+                            if self._last_state[0] > 0 \
+                                else self.brightness_hass_to_btmesh(DEFAULT_LIGHT_BRIGHTNESS),
                         present_ctl_temperature=self._last_state[1],
                     )
                 )
             else:
                 self.update_model_state(
                     Container(
-                        present_ctl_lightness= self.brightness_hass_to_btmesh(DEFAULT_LIGHT_BRIGHTNESS),
+                        present_ctl_lightness=self.brightness_hass_to_btmesh(DEFAULT_LIGHT_BRIGHTNESS),
                         present_ctl_temperature=DEFAULT_LIGHT_TEMPERATURE,
                     )
                 )
@@ -382,9 +343,13 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
         """Turn the specified light off."""
 
         transition_time = int(kwargs[ATTR_TRANSITION]) if ATTR_TRANSITION in kwargs else None
-#        _LOGGER.debug(f"async_turn_on(): transition_time = {transition_time}")
 
-        await self.generic_onoff_set(0, transition_time=transition_time)
+        await self.app.generic_onoff_set(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+            onoff=0,
+            transition_time=transition_time
+        )
 
         # hack that allows you to use GenericOnOff instead of
         # LightCTL to turn on the light
@@ -393,6 +358,13 @@ class BtMeshLight_LightCTL(BtMeshLightEntity):
                 Container(
                     present_ctl_lightness=0,
                     present_ctl_temperature=self._last_state[1],
+                )
+            )
+        else:
+            self.update_model_state(
+                Container(
+                    present_ctl_lightness=0,
+                    present_ctl_temperature=DEFAULT_LIGHT_TEMPERATURE,
                 )
             )
         self.invalidate_device_state()
@@ -419,20 +391,13 @@ class BtMeshLight_LightHSL(BtMeshLightEntity):
 
     async def query_model_state(self) -> any:
         """Get LightHSL state."""
-        client = self.app.elements[0][LightHSLClient]
-        try:
-            return await client.target_get(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            pass
-        return None
+        return await self.app.light_hsl_get_target(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+        )
 
     async def async_update(self) -> None:
-        """Update LightEntity state from latest LightHSL status."""
+        """Update LightEntity state from latest LightHSL."""
         if self.model_state is not None:
             self._attr_brightness = BtMeshLightEntity.brightness_btmesh_to_hass(self.model_state.hsl_lightness)
             self._attr_hs_color = BtMeshLightEntity.color_btmesh_to_hass(
@@ -450,23 +415,25 @@ class BtMeshLight_LightHSL(BtMeshLightEntity):
         else:
             self._attr_available = False
 
-    async def light_hsl_set(self, lightness, hue, saturation, transition_time=None) -> None:
+    async def light_hsl_set(
+        self,
+        lightness: int,
+        hue: int,
+        saturation: int,
+        transition_time: float=None
+    ) -> None:
         """Set LightHSL lightness, hue and saturation"""
-        try:
-            client = self.app.elements[0][LightHSLClient]
-            result = await client.set(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                hsl_lightness=lightness,
-                hsl_hue=hue,
-                hsl_saturation=saturation,
-                delay=None if transition_time is None else 0,
-                transition_time=transition_time,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT
-            )
+        result = await self.app.light_hsl_set(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+            hsl_lightness=lightness,
+            hsl_hue=hue,
+            hsl_saturation=saturation,
+            transition_time=transition_time,
+        )
+        if result is not None:
             self.update_model_state(result)
-        except asyncio.TimeoutError:
+        else:
             self.update_model_state(
                 Container(
                     hsl_lightness=lightness,
@@ -480,7 +447,6 @@ class BtMeshLight_LightHSL(BtMeshLightEntity):
         """Turn the specified light on."""
 
         transition_time = int(kwargs[ATTR_TRANSITION]) if ATTR_TRANSITION in kwargs else None
-#        _LOGGER.debug(f"async_turn_on(): transition_time = {transition_time}")
 
         if ATTR_BRIGHTNESS in kwargs or ATTR_HS_COLOR in kwargs:
             arg_brightness = kwargs.get(ATTR_BRIGHTNESS, self._attr_brightness)
@@ -491,13 +457,18 @@ class BtMeshLight_LightHSL(BtMeshLightEntity):
                 (hue, saturation) = BtMeshLightEntity.color_hass_to_btmesh(arg_color)
 
                 await self.light_hsl_set(
-                    lightness,
-                    hue,
-                    saturation,
+                    lightness=lightness,
+                    hue=hue,
+                    saturation=saturation,
                     transition_time=transition_time
                 )
         else:
-            await self.generic_onoff_set(1, transition_time=transition_time)
+            await self.app.generic_onoff_set(
+                destination=self.unicast_addr,
+                app_index=self.app_key,
+                onoff=1,
+                transition_time=transition_time
+            )
 
             # hack that allows you to use GenericOnOff instead of
             # LightHSL to turn off the light
@@ -523,9 +494,13 @@ class BtMeshLight_LightHSL(BtMeshLightEntity):
         """Turn the specified light off."""
 
         transition_time = int(kwargs[ATTR_TRANSITION]) if ATTR_TRANSITION in kwargs else None
-#        _LOGGER.debug(f"async_turn_on(): transition_time = {transition_time}")
 
-        await self.generic_onoff_set(0, transition_time=transition_time)
+        await self.app.generic_onoff_set(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+            onoff=0,
+            transition_time=transition_time
+        )
 
         # hack that allows you to use GenericOnOff instead of
         # LightHSL to turn off the light
