@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 
+from construct import Container
+
 from bluetooth_mesh.messages.properties import PropertyID
 from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
 from bluetooth_mesh.messages.sensor import SensorOpcode
@@ -33,6 +35,7 @@ from homeassistant.const import (
 from bt_mesh_ctrl import BtMeshModelId, BtSensorAttrPropertyId, BtMeshOpcode
 from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 
+from .application import BtMeshApplication
 from .entity import BtMeshEntity, ClassNotFoundError
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
@@ -133,26 +136,18 @@ class BtMeshGenericBatteryEntity(BtMeshEntity, SensorEntity):
         BtMeshEntity.__init__(self, app, cfg_model, passive)
         self._attr_available = False
 
+    async def query_model_state(self) -> any:
+        """Query GenericBattery state."""
+        return await self.app.generic_battery_get(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+        )
+
     async def async_update(self) -> None:
         """Fetch new state data for the sensor."""
         self._attr_native_value = self.model_state.battery_level \
             if self.model_state is not None else None
         self._attr_available = self._attr_native_value is not None
-
-    async def query_model_state(self) -> any:
-        """..."""
-        try:
-            client = self.app.elements[0][GenericBatteryClient]
-            return await client.get(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT
-            )
-        except asyncio.TimeoutError:
-            pass
-
-        return None
 
 
 # BT Mesh Sensor Server
@@ -175,7 +170,8 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
         update_period: int,
         passive: bool
     ) -> None:
-        if cfg_model.model_id != BtMeshModelId.SensorServer and cfg_model.model_id != BtMeshModelId.SensorSetupServer:
+        if cfg_model.model_id != BtMeshModelId.SensorServer and \
+                cfg_model.model_id != BtMeshModelId.SensorSetupServer:
             raise ValueError("cfg_model.model_id must be SensorServer or SensorSetupServer")
 
         BtMeshEntity.__init__(self, app, cfg_model, passive)
@@ -194,7 +190,7 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
         destination: Union[int, UUID],
         message: ParsedMeshMessage
     ):
-        """..."""
+        """Receive status reports from Sensor model."""
         opcode_name = BtMeshOpcode.get(message.opcode).name.lower()
         match message.opcode:
             case SensorOpcode.SENSOR_STATUS:
@@ -207,30 +203,12 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
                 pass
 
     async def query_model_state(self) -> any:
-        """..."""
-        _LOGGER.debug(f"query_model_state():")
-        try:
-            client = self.app.elements[0][SensorClient]
-            _LOGGER.debug(f"query_model_state(): {self.unicast_addr:04x}.{self.property_id:04x}")
-            result = await client.get(
-                destination=self.unicast_addr,
-                app_index=self.app_key,
-                send_interval=G_SEND_INTERVAL,
-                timeout=G_TIMEOUT
-            )
-            if result:
-                for property in result:
-                    if self.property_id == property.sensor_setting_property_id:
-                        _LOGGER.debug(f"query_model_state(): {self.unicast_addr:04x}.{self.property_id:04x} result={property}")
-                        return property
-
-        except asyncio.TimeoutError:
-            _LOGGER.debug(f"query_model_state():  {self.unicast_addr:04x}.{self.property_id:04x} timeout")
-            pass
-
-        _LOGGER.debug(f"query_model_state(): {self.unicast_addr:04x}.{self.property_id:04x} result=None")
-        return None
-
+        """Query sensor state."""
+        return await self.app.sensor_get(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+            property_id=self.property_id,
+        )
 
     async def sensor_get(self):
         """Extract sensor value from response."""
