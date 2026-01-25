@@ -2,8 +2,19 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 
+from construct import Container
+
+from bluetooth_mesh.messages.properties import PropertyID
+from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
+from bluetooth_mesh.messages.sensor import SensorOpcode
+from bluetooth_mesh.models.generic.battery import GenericBatteryClient
+from bluetooth_mesh.models.sensor import SensorClient
+
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.typing import ConfigType
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -17,20 +28,23 @@ from homeassistant.const import (
     UnitOfElectricPotential,
     UnitOfElectricCurrent,
     UnitOfPower,
+    UnitOfTemperature,
+    Platform,
 )
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-#, DeviceInfo
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from bluetooth_mesh.messages.properties import PropertyID
+from bt_mesh_ctrl import BtMeshModelId, BtSensorAttrPropertyId, BtMeshOpcode
+from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 
-from .bt_mesh.entity import BtMeshEntity
-from .const import DOMAIN, BT_MESH_APPLICATION, BT_MESH_CFGCLIENT_CONF
-from .bt_mesh import BtMeshModelId, BtSensorAttrPropertyId
-from .mesh_cfgclient_conf import ELEMENT_MAIN
+from .application import BtMeshApplication
+from .entity import BtMeshEntity, ClassNotFoundError
+from .const import (
+    BT_MESH_DISCOVERY_ENTITY_NEW,
+    BT_MESH_MSG,
+    G_SEND_INTERVAL,
+    G_TIMEOUT,
+)
 
-
+import logging
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -38,352 +52,329 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigType,
-    add_entities: AddEntitiesCallback
+    async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     """Set up the BT MESH sensor entry."""
 
-    entry_data = hass.data[DOMAIN][config_entry.entry_id]
-    application = entry_data[BT_MESH_APPLICATION]
-    mesh_cfgclient_conf = entry_data[BT_MESH_CFGCLIENT_CONF]
-
-    entities = []
-    devices = mesh_cfgclient_conf.devices
-    for device in devices:
+    @callback
+    def async_add_sensor(
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        property_id: PropertyID,
+        update_period: int,
+        passive: bool
+    ) -> None:
+#        _LOGGER.error(f"### SENSOR: {cfg_model.unicast_addr}.{property_id}")
         try:
-            device_unicat_addr = device['unicastAddress']
+            sensor_entity = BtMeshSensorEntityFactory.get(property_id)(
+                app,
+                cfg_model,
+                update_period,
+                passive
+            )
+            async_add_entities([sensor_entity])
+        except ClassNotFoundError as e:
+#            _LOGGER.error(f"failed to create BtMeshSensorEntity {cfg_model.unicast_addr}.{property_id:04x}: {repr(e)}")
+            pass
 
-            # listing Sensor models
-            if BtMeshModelId.SensorServer in device['models']:
-                for sensor in device['models'][BtMeshModelId.SensorServer]:
-                    element_idx = sensor[ELEMENT_MAIN]
-                    element_unicast_addr = device_unicat_addr + element_idx
-                    app_index = device['app_keys'][element_idx][BtMeshModelId.SensorServer]
-#                    _LOGGER.debug("SensorServer: uuid=%s, %d, addr=0x%04x, app_key=%d" % (device['UUID'], element_idx, element_unicast_addr, app_index))
 
-                    # TODO: get descriptor
-                    # TODO: processing error
-                    descriptor = await application.sensor_descriptor_get(element_unicast_addr, app_index);
-                    if hasattr(descriptor, "__iter__"):
-                        for propery in descriptor:
-                            if hasattr(propery, "sensor_property_id"):
-                                property_id = int(propery['sensor_property_id'])
-                                sensor_update_interval = int(round(propery['sensor_update_interval']))
-#                                _LOGGER.debug("uuid=%s, %d, addr=0x%04x, app_index=%d, property_id=0x%x, sensor_update_interval=%d" % (device['UUID'], element_idx, element_unicast_addr, app_index, property_id, sensor_update_interval))
+    @callback
+    def async_add_generic_battery(
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        passive: bool
+    ) -> None:
+#        _LOGGER.error(f"### BATTERY: {cfg_model.unicast_addr}")
+        async_add_entities([BtMeshGenericBatteryEntity(app, cfg_model, passive)])
 
-                                sensor = create_sensor(
-                                    application=application,
-                                    uuid=device['UUID'],
-                                    cid=int(device['cid']),
-                                    pid=int(device['pid']),
-                                    vid=int(device['vid']),
-                                    addr=element_unicast_addr,
-                                    app_index=app_index,
-                                    property_id=property_id
-                                )
 
-                                if sensor != None:
-                                    entities.append(sensor)
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(Platform.SENSOR),
+            async_add_sensor,
+        )
+    )
 
-                            else:
-                                # TODO: set aside the node for later processing
-                                pass
-
-            # listing Generic Battery model
-            if BtMeshModelId.GenericBatteryServer in device['models']:
-#                _LOGGER.debug(device['models'][BtMeshModelId.GenericBatteryServer])
-                for generic_battery in device['models'][BtMeshModelId.GenericBatteryServer]:
-                    element_idx = generic_battery[ELEMENT_MAIN]
-                    element_unicast_addr = device_unicat_addr + element_idx
-                    app_index = device['app_keys'][element_idx][BtMeshModelId.GenericBatteryServer]
-#                    _LOGGER.debug("GenericBatteryServer: uuid=%s, %d, addr=0x%04x, app_key=%d" % (device['UUID'], element_idx, element_unicast_addr, app_index))
-
-                    sensor = BtMeshGenericBatteryEntity(
-                        application=application,
-                        uuid=device['UUID'],
-                        cid=int(device['cid']),
-                        pid=int(device['pid']),
-                        vid=int(device['vid']),
-                        addr=element_unicast_addr,
-                        app_index=app_index
-                    )
-                    entities.append(sensor)
-
-        except KeyError:
-            continue
-
-    add_entities(entities)
-
-    application.sensor_init_receive_status()
-    application.generic_battery_init_receive_status()
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.get_name(BtMeshModelId.GenericBatteryServer)),
+            async_add_generic_battery,
+        )
+    )
 
     return True
 
 
-
 # BT Mesh Generic Battery Server
-
 class BtMeshGenericBatteryEntity(BtMeshEntity, SensorEntity):
     """Class for Bluetooth Mesh Generic Battery sensor."""
 
+    entity_description = SensorEntityDescription(
+        key="battery_level",
+        device_class=SensorDeviceClass.BATTERY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        name="Battery Level",
+    )
+
+    status_opcodes = (
+        GenericBatteryOpcode.GENERIC_BATTERY_STATUS,
+    )
+
     def __init__(
         self,
-        application,
-        uuid,
-        cid,
-        pid,
-        vid,
-        addr,
-        app_index
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        passive: bool
     ) -> None:
-        BtMeshEntity.__init__(
-            self,
-            application,
-            uuid,
-            cid,
-            pid,
-            vid,
-            addr,
-            BtMeshModelId.GenericBatteryServer,
-            app_index
-        )
-        self.entity_description = SensorEntityDescription(
-            key="battery_level",
-            device_class=SensorDeviceClass.BATTERY,
-            native_unit_of_measurement=PERCENTAGE,
-            state_class=SensorStateClass.MEASUREMENT,
-            entity_category=EntityCategory.DIAGNOSTIC,
-            name="Battery Level",
+        if cfg_model.model_id != BtMeshModelId.GenericBatteryServer:
+            raise ValueError("cfg_model.model_id must be GenericBatteryServer")
+
+        BtMeshEntity.__init__(self, app, cfg_model, passive)
+        self._attr_available = False
+
+    async def query_model_state(self) -> any:
+        """Query GenericBattery state."""
+        return await self.app.generic_battery_get(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
         )
 
     async def async_update(self) -> None:
         """Fetch new state data for the sensor."""
-        result = await self.application.generic_battery_get(
-            self.unicast_addr,
-            self.app_index
-        )
-        if result is not None:
-            self._attr_native_value = result.battery_level
-
+        self._attr_native_value = self.model_state.battery_level \
+            if self.model_state is not None else None
+        self._attr_available = self._attr_native_value is not None
 
 
 # BT Mesh Sensor Server
-
-def create_sensor(
-    application: BtMeshApplication,
-    uuid: str,
-    cid: int,
-    pid: int,
-    vid: int,
-    addr: int,
-    app_index: int,
-    property_id: int
-) -> BtMeshSensorEntity | None:
-    if property_id in SENSOR_CLASSES:
-        return SENSOR_CLASSES[property_id](
-            application=application,
-            uuid=uuid,
-            cid=cid,
-            pid=pid,
-            vid=vid,
-            addr=addr,
-            app_index=app_index
-        )
-    else:
-        return None
-
-
 class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
-    """Base class for Bluetooth Mesh sensor."""
+    """Base class for Bluetooth Mesh sensor entity."""
 
-    _attr_property_id: int
+    property_id: PropertyID
+    argument_keys: list
+    argument_round = 2
+
+    status_opcodes = (
+        SensorOpcode.SENSOR_STATUS,
+        SensorOpcode.SENSOR_DESCRIPTOR_STATUS,
+    )
 
     def __init__(
         self,
-        application,
-        uuid,
-        cid,
-        pid,
-        vid,
-        addr,
-        app_index,
-        property_id,
-        entity_description: SensorEntityDescription
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        update_period: int,
+        passive: bool
     ) -> None:
-        BtMeshEntity.__init__(self, application, uuid, cid, pid, vid, addr, BtMeshModelId.SensorServer, app_index);
-        self.entity_description = entity_description
-        self._attr_property_id = property_id;
+        if cfg_model.model_id != BtMeshModelId.SensorServer and \
+                cfg_model.model_id != BtMeshModelId.SensorSetupServer:
+            raise ValueError("cfg_model.model_id must be SensorServer or SensorSetupServer")
 
-        # update sensor ID and Name
-        self._attr_name = "%04x-%s-%s" % (
-            self._unicast_addr,
-            BtMeshModelId.get_name(self._model_id),
-            BtSensorAttrPropertyId.get_name(self._attr_property_id)
+        BtMeshEntity.__init__(self, app, cfg_model, passive)
+
+        # update sensor unique_id and name attributes
+        self._attr_unique_id = f"{self.cfg_model.unicast_addr:04x}-{self.cfg_model.model_id:04x}-{self.property_id}-{str(self.cfg_model.device.uuid)}"
+        self._attr_name = f"{self.cfg_model.unicast_addr:04x}-{BtMeshModelId.get_name(self.cfg_model.model_id)}-{BtSensorAttrPropertyId.get_name(self.property_id)}"
+        self._attr_available = False
+
+        self.update_timeout = update_period
+
+    def receive_message(
+        self,
+        source: int,
+        app_index: int,
+        destination: Union[int, UUID],
+        message: ParsedMeshMessage
+    ):
+        """Receive status reports from Sensor model."""
+        opcode_name = BtMeshOpcode.get(message.opcode).name.lower()
+        match message.opcode:
+            case SensorOpcode.SENSOR_STATUS:
+                for property in message[opcode_name]:
+                    if property.sensor_setting_property_id == self.property_id:
+                        #self.update_model_state_thr(property)
+                        self.update_model_state(property)
+                        break
+            case _:
+                pass
+
+    async def query_model_state(self) -> any:
+        """Query sensor state."""
+        return await self.app.sensor_get(
+            destination=self.unicast_addr,
+            app_index=self.app_key,
+            property_id=self.property_id,
         )
-        self._attr_unique_id = "%04x-%04x-%04x" % (
-            self._unicast_addr,
-            self._model_id,
-            self._attr_property_id
-        )
-
-    @property
-    def property_id(self):
-        """Return sensor Propery Id."""
-        return self._attr_property_id
-
 
     async def sensor_get(self):
-        """Get sensor value."""
-        return await self.application.sensor_get(
-            self.unicast_addr,
-            self.app_index,
-            self.property_id
-        )
+        """Extract sensor value from response."""
+        try:
+            prop = self.model_state
+            for key in self.argument_keys:
+                prop = prop[key]
+            return round(float(prop), self.argument_round)
+        except TypeError:
+            pass
+        except Exception as e:
+            _LOGGER.error(f"BtMeshSensor: sensor_get(): {e}")
+            return None
 
+    async def async_update(self) -> None:
+        """Fetch new state data for the sensor."""
+        self._attr_native_value = await self.sensor_get()
+        self._attr_available = self._attr_native_value is not None
 
 
 class BtMeshSensor_PresentDeviceInputPower(BtMeshSensorEntity):
-    """..."""
+    """Present Input Power sensor"""
 
-    def __init__(self, application, uuid, cid, pid, vid, addr, app_index) -> None:
-        super().__init__(
-            application,
-            uuid,
-            cid,
-            pid,
-            vid,
-            addr,
-            app_index,
-            PropertyID.PRESENT_DEVICE_INPUT_POWER,
-            SensorEntityDescription(
-                key="present_device_input_power",
-                device_class=SensorDeviceClass.POWER,
-                native_unit_of_measurement=UnitOfPower.WATT,
-                state_class=SensorStateClass.MEASUREMENT,
-                name="Power",
-            )
-        )
-
-    async def sensor_get(self):
-        """Get power value."""
-        try:
-            property = await super().sensor_get()
-            return round(float(property['present_device_input_power']['power']), 2)
-        except Exception:
-            return None
-
-    async def async_update(self) -> None:
-        """Fetch new state data for the sensor."""
-        self._attr_native_value = await self.sensor_get()
+    property_id = PropertyID.PRESENT_DEVICE_INPUT_POWER
+    entity_description = SensorEntityDescription(
+        key="present_device_input_power",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Power",
+    )
+    argument_keys = ["present_device_input_power", "power"]
 
 
 class BtMeshSensor_PresentInputCurrent(BtMeshSensorEntity):
-    """..."""
+    """Present Input Current sensor."""
 
-    def __init__(self, application, uuid, cid, pid, vid, addr, app_index) -> None:
-        super().__init__(
-            application,
-            uuid,
-            cid,
-            pid,
-            vid,
-            addr,
-            app_index,
-            PropertyID.PRESENT_INPUT_CURRENT,
-            SensorEntityDescription(
-                key="present_input_current",
-                device_class=SensorDeviceClass.CURRENT,
-                native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-                state_class=SensorStateClass.MEASUREMENT,
-                name="Current",
-            )
-        )
-
-    async def sensor_get(self):
-        """Get power value."""
-        try:
-            property = await super().sensor_get()
-            return round(float(property['present_input_current']['current']), 3)
-        except Exception:
-            return None
-
-    async def async_update(self) -> None:
-        """Fetch new state data for the sensor."""
-        self._attr_native_value = await self.sensor_get()
+    property_id = PropertyID.PRESENT_INPUT_CURRENT
+    entity_description = SensorEntityDescription(
+        key="present_input_current",
+        device_class=SensorDeviceClass.CURRENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Current",
+    )
+    argument_keys = ["present_input_current", "current"]
 
 
 class BtMeshSensor_PreciseTotalDeviceEnergyUse(BtMeshSensorEntity):
-    """..."""
+    """Energy Use sensor."""
 
-    def __init__(self, application, uuid, cid, pid, vid, addr, app_index) -> None:
-        super().__init__(
-            application,
-            uuid,
-            cid,
-            pid,
-            vid,
-            addr,
-            app_index,
-            PropertyID.PRECISE_TOTAL_DEVICE_ENERGY_USE,
-            SensorEntityDescription(
-                key="totalenergy",
-                device_class=SensorDeviceClass.ENERGY,
-                native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-                state_class=SensorStateClass.TOTAL_INCREASING,
-                name="Total Energy",
-            )
-        )
-
-    async def sensor_get(self):
-        """Get enegry value."""
-        try:
-            property = await super().sensor_get()
-            return float(property['precise_total_device_energy_use']['energy'])
-        except Exception:
-            return None
-
-    async def async_update(self) -> None:
-        """Fetch new state data for the sensor."""
-        self._attr_native_value = await self.sensor_get()
+    property_id = PropertyID.PRECISE_TOTAL_DEVICE_ENERGY_USE
+    entity_description = SensorEntityDescription(
+        key="totalenergy",
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        name="Total Energy",
+    )
+    argument_keys = ["precise_total_device_energy_use", "energy"]
 
 
 class BtMeshSensor_PresentInputVoltage(BtMeshSensorEntity):
-    """..."""
+    """Input Voltage sensor"""
 
-    def __init__(self, application, uuid, cid, pid, vid, addr, app_index) -> None:
-        super().__init__(
-            application,
-            uuid,
-            cid,
-            pid,
-            vid,
-            addr,
-            app_index,
-            PropertyID.PRESENT_INPUT_VOLTAGE,
-            SensorEntityDescription(
-                key="present_input_voltage",
-                device_class=SensorDeviceClass.VOLTAGE,
-                native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-                state_class=SensorStateClass.MEASUREMENT,
-                name="Voltage",
-            )
-        )
-
-    async def sensor_get(self):
-        """Get voltage value."""
-        try:
-            property = await super().sensor_get()
-            return round(float(property['present_input_voltage']['voltage']), 2)
-        except Exception:
-            return None
-
-    async def async_update(self) -> None:
-        """Fetch new state data for the sensor."""
-        self._attr_native_value = await self.sensor_get()
+    property_id = PropertyID.PRESENT_INPUT_VOLTAGE
+    entity_description = SensorEntityDescription(
+        key="present_input_voltage",
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Voltage",
+    )
+    argument_keys = ["present_input_voltage", "voltage"]
 
 
-SENSOR_CLASSES = {
-    PropertyID.PRESENT_DEVICE_INPUT_POWER: BtMeshSensor_PresentDeviceInputPower,
-    PropertyID.PRECISE_TOTAL_DEVICE_ENERGY_USE: BtMeshSensor_PreciseTotalDeviceEnergyUse,
-    PropertyID.PRESENT_INPUT_VOLTAGE: BtMeshSensor_PresentInputVoltage,
-    PropertyID.PRESENT_INPUT_CURRENT: BtMeshSensor_PresentInputCurrent
-}
+class BtMeshSensor_Desired_Ambient_Temperature(BtMeshSensorEntity):
+    """Desired Ambient Temperatire sensor"""
+
+    property_id = PropertyID.DESIRED_AMBIENT_TEMPERATURE
+    entity_description = SensorEntityDescription(
+        key="desired_ambient_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Desired ambient temperatire",
+    )
+    argument_keys = ["desired_ambient_temperature", "temperature"]
+
+
+class BtMeshSensor_Precise_Present_Ambient_Temperature(BtMeshSensorEntity):
+    """Ambient Temperature sensor"""
+
+    property_id = PropertyID.PRECISE_PRESENT_AMBIENT_TEMPERATURE
+    entity_description = SensorEntityDescription(
+        key="precise_present_ambient_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Ambient temperatire",
+    )
+    argument_keys = ["precise_present_ambient_temperature", "temperature"]
+
+class BtMeshSensor_Precise_Present_Ambient_Temperature(BtMeshSensorEntity):
+    """Ambient Temperature sensor"""
+
+    property_id = PropertyID.PRECISE_PRESENT_AMBIENT_TEMPERATURE
+    entity_description = SensorEntityDescription(
+        key="precise_present_ambient_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Ambient temperatire",
+    )
+    argument_keys = ["precise_present_ambient_temperature", "temperature"]
+
+class BtMeshSensor_Present_Ambient_Relative_Humidity(BtMeshSensorEntity):
+    """Ambient Humidity sensor"""
+
+    property_id = PropertyID.PRESENT_AMBIENT_RELATIVE_HUMIDITY
+    entity_description = SensorEntityDescription(
+        key="present_ambient_relative_humidity",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Ambient humidity",
+    )
+    argument_keys = ["present_ambient_relative_humidity", "humidity"]
+
+class BtMeshSensor_Present_Indoor_Relative_Humidity(BtMeshSensorEntity):
+    """Indoor Humidity sensor"""
+
+    property_id = PropertyID.PRESENT_INDOOR_RELATIVE_HUMIDITY
+    entity_description = SensorEntityDescription(
+        key="present_indoor_relative_humidity",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Indoor humidity",
+    )
+    argument_keys = ["present_indoor_relative_humidity", "humidity"]
+
+class BtMeshSensor_Present_Outdoor_Relative_Humidity(BtMeshSensorEntity):
+    """Outdoor Humidity sensor"""
+
+    property_id = PropertyID.PRESENT_OUTDOOR_RELATIVE_HUMIDITY
+    entity_description = SensorEntityDescription(
+        key="present_outdoor_relative_humidity",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Outdoor humidity",
+    )
+    argument_keys = ["present_outdoor_relative_humidity", "humidity"]
+
+
+class BtMeshSensorEntityFactory(object):
+    @staticmethod
+    def get(property_id: int) -> object:
+        if type(property_id) != int:
+            raise ValueError("property_id must be int")
+
+        raw_subclasses_ = BtMeshSensorEntity.__subclasses__()
+        classes: dict[int, Callable[..., object]] = {c.property_id:c for c in raw_subclasses_}
+        class_ = classes.get(property_id, None)
+        if class_ is not None:
+            return class_
+
+        raise ClassNotFoundError
