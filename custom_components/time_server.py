@@ -25,7 +25,6 @@ class TimeServerMixin:
     # self.loop
 
     def time_server_init(self):
-
         # Time Server message handlers
         def receive_get(
             _source: int,
@@ -33,8 +32,6 @@ class TimeServerMixin:
             _destination: Union[int, UUID],
             message: ParsedMeshMessage,
         ):
-            _LOGGER.debug("Time Get: receive %04x->%04x" % (_source, _destination))
-
             system_timezone_offset = time.timezone * -1
             system_timezone = timezone(offset=timedelta(seconds=system_timezone_offset))
             date = datetime.now(system_timezone)
@@ -57,8 +54,6 @@ class TimeServerMixin:
             _destination: Union[int, UUID],
             message: ParsedMeshMessage,
         ):
-            _LOGGER.debug("Time Zone Get: receive %04x->%04x" % (_source, _destination))
-
             system_timezone_offset = time.timezone * -1
             system_timezone_delta = timedelta(seconds=system_timezone_offset)
 
@@ -79,8 +74,6 @@ class TimeServerMixin:
             _destination: Union[int, UUID],
             message: ParsedMeshMessage,
         ):
-            _LOGGER.debug("TAI-UTC Delta Get: receive %04x->%04x" % (_source, _destination))
-
             server = self.elements[0][TimeServer]
             self.loop.create_task(
                 server.tai_utc_delta_status(
@@ -99,8 +92,6 @@ class TimeServerMixin:
             _destination: Union[int, UUID],
             message: ParsedMeshMessage,
         ):
-            _LOGGER.debug("Get: receive %04x->%04x" % (_source, _destination))
-
             server = self.elements[0][TimeServer]
             self.loop.create_task(
                 server.time_status(

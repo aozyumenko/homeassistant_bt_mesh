@@ -52,7 +52,7 @@ MODEL_ID_PLATFROM: Final = {
     BtMeshModelId.LightLightnessServer: Platform.LIGHT,
     BtMeshModelId.LightCTLServer: Platform.LIGHT,
     BtMeshModelId.LightHSLServer: Platform.LIGHT,
-#    BtMeshModelId.ThermostatServer: Platform.LIGHT,
+    BtMeshModelId.ThermostatServer: Platform.CLIMATE,
 }
 
 
@@ -194,10 +194,10 @@ async def track_mesh_conf(hass: HomeAssistant, entry: BtMeshConfigEntry):
     """Reload Mesh network configuration task."""
     while True:
         if mesh_conf.is_modified():
-            _LOGGER.debug("reload_mesh_network_handler(), config modified")
+#            _LOGGER.debug("reload_mesh_network_handler(), config modified")
             try:
                 c = await hass.async_add_executor_job(mesh_conf.load)
-                _LOGGER.debug(c)
+#                _LOGGER.debug(c)
             except Exception as e:
                 _LOGGER.error(f"Fail to load Mesh Network config: {e}")
 
@@ -245,8 +245,8 @@ async def load_devices_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
 #            _LOGGER.debug(f"    skip sensor")
             continue
 
-        if cfg_model.model_id == BtMeshModelId.GenericBatteryServer:
-            _LOGGER.debug(f"### Load battery Server")
+#        if cfg_model.model_id == BtMeshModelId.GenericBatteryServer:
+#            _LOGGER.debug(f"### Load battery Server")
 
         # skip already discovered devices
         if cfg_model.unique_id in hass.data[DOMAIN][entry.entry_id][BT_MESH_ALREADY_DISCOVERED]:
@@ -301,18 +301,18 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
     descriptors = await descriptors_store.async_load()
     descriptors_updated: dict[int, Any] = dict()
 
-    _LOGGER.debug("load_sensors_config(): start")
+#    _LOGGER.debug("load_sensors_config(): start")
 
     cfg_models = mesh_conf.get_models_by_model_id(BtMeshModelId.SensorServer)
     cfg_models.extend(mesh_conf.get_models_by_model_id(BtMeshModelId.SensorSetupServer))
-    _LOGGER.debug(f"load_sensors_config(): {cfg_models}")
+#    _LOGGER.debug(f"load_sensors_config(): {cfg_models}")
 
     while (True):
         repeat = False
         for cfg_model in cfg_models:
             unicast_addr_key = f"{cfg_model.unicast_addr:04x}"
             passive = True if unicast_addr_key in passive_conf and passive_conf[unicast_addr_key] else False
-            _LOGGER.debug(f"sensor: unicast_addr={cfg_model.unicast_addr} model_id={cfg_model.model_id}, {cfg_model.unique_id}")
+#            _LOGGER.debug(f"sensor: unicast_addr={cfg_model.unicast_addr} model_id={cfg_model.model_id}, {cfg_model.unique_id}")
 
             # skip disabled devices
             device_entry = device_registry.async_get_device(
@@ -331,9 +331,8 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
             # get descriptors from device
             else:
                 _sensor_descriptors = await app.sensor_descriptor_get(
-                    address=cfg_model.unicast_addr,
+                    destination=cfg_model.unicast_addr,
                     app_index=cfg_model.app_key,
-                    passive=passive
                 )
                 sensor_descriptors = [
                     {
@@ -372,10 +371,10 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
                 hass.data[DOMAIN][entry.entry_id][BT_MESH_ALREADY_DISCOVERED].append(cfg_model.unique_id)
 
             except Exception as e:
-                _LOGGER.debug("    fail to get descriptors for device %s, addr %04x: %s" % (cfg_model.device.uuid, cfg_model.device.unicast_addr, repr(e)))
+#                _LOGGER.debug("    fail to get descriptors for device %s, addr %04x: %s" % (cfg_model.device.uuid, cfg_model.device.unicast_addr, repr(e)))
                 repeat = True
 
-        _LOGGER.debug(f"load_sensors_config(): repeat: {repeat}")
+#        _LOGGER.debug(f"load_sensors_config(): repeat: {repeat}")
 
         if not repeat:
             break
@@ -385,7 +384,7 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
     # save updated descriptors to persistent strage
     await descriptors_store.async_save(descriptors_updated)
 
-    _LOGGER.debug("load_sensors_config():no new devices - exit")
+#    _LOGGER.debug("load_sensors_config():no new devices - exit")
 
 
 async def cleanup_device_registry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
@@ -412,7 +411,7 @@ async def cleanup_device_registry(hass: HomeAssistant, entry: BtMeshConfigEntry)
 #                _LOGGER.debug(f"++++++++ save device {dev_id} - {item[1]}")
                 good +=1
 
-    _LOGGER.debug(f"good={good}, bad={bad}")
+#    _LOGGER.debug(f"good={good}, bad={bad}")
 
     pass
 
@@ -420,7 +419,7 @@ async def cleanup_device_registry(hass: HomeAssistant, entry: BtMeshConfigEntry)
 
 async def async_unload_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
     """Unloading the Tuya platforms."""
-    _LOGGER.debug(f"async_unload_entry(): {entry}")
+#    _LOGGER.debug(f"async_unload_entry(): {entry}")
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         runtime_data = hass.data[DOMAIN].pop(entry.entry_id)
         track_mesh_conf_task = runtime_data["track_mesh_conf_task"]
