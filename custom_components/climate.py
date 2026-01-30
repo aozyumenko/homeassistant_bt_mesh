@@ -57,10 +57,24 @@ async def async_setup_entry(
     def async_add_climate(
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
-        passive: bool
+        node_conf: dict
     ) -> None:
-#        _LOGGER.debug(f"async_add_climate(): uuid={cfg_model.device.uuid}, model_id={cfg_model.model_id}, addr={cfg_model.unicast_addr:04x}, app_key={cfg_model.app_key}")
-        add_entities([BtMeshClimate_Thermostat(app, cfg_model, passive)])
+        platform_conf = node_conf.get(Platform.LIGHT, None) or {}
+        invalidate_timeout = platform_conf.get(CONF_UPDATE_TIME, \
+            node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT))
+        update_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
+            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT))
+
+        add_entities(
+            [
+                BtMeshClimate_Thermostat(
+                    app=app,
+                    cfg_model=cfg_model,
+                    invalidate_timeout=invalidate_timeout,
+                    update_timeout=update_timeout,
+                )
+            ]
+        )
 
     config_entry.async_on_unload(
         async_dispatcher_connect(
@@ -90,19 +104,6 @@ class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
 
     _flag_update_range = True
-
-
-    def __init__(
-        self,
-        app: BtMeshApplication,
-        cfg_model: MeshCfgModel,
-        passive: bool
-    ) -> None:
-        if cfg_model.model_id != BtMeshModelId.ThermostatServer:
-            raise ValueError("cfg_model.model_id must be ThermostatServer")
-
-        BtMeshEntity.__init__(self, app, cfg_model, passive)
-        self._attr_available = False
 
     def receive_message(
         self,

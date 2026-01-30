@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import voluptuous as vol
 from typing import Final
+#from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.typing import ConfigType
@@ -30,10 +32,12 @@ from .const import (
     CONF_DBUS_APP_PATH,
     CONF_DBUS_APP_TOKEN,
     CONF_MESH_CFGCLIENT_CONFIG_PATH,
-    CONF_ELEMENTS,
+    CONF_NODES,
     CONF_UNICAST_ADDR,
     CONF_SENSOR_DESCRIPTORS,
     CONF_PASSIVE,
+    CONF_UPDATE_TIME,
+    CONF_KEEPALIVE_TIME,
     DEFAULT_DBUS_APP_PATH,
     DEFAULT_MESH_CFGCLIENT_CONFIG_PATH,
     BT_MESH_DISCOVERY_ENTITY_NEW,
@@ -44,20 +48,24 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 
-MODEL_ID_PLATFROM: Final = {
-    BtMeshModelId.GenericOnOffServer: Platform.SWITCH,
+#MODEL_ID_PLATFROM: Final = {
+#    BtMeshModelId.GenericOnOffServer: Platform.SWITCH,
 #    BtMeshModelId.GenericLevelServer: Platform.COVER,
-    BtMeshModelId.GenericBatteryServer: BtMeshModelId.get_name(BtMeshModelId.GenericBatteryServer),
-    BtMeshModelId.SensorServer: Platform.SENSOR,
-    BtMeshModelId.LightLightnessServer: Platform.LIGHT,
-    BtMeshModelId.LightCTLServer: Platform.LIGHT,
-    BtMeshModelId.LightHSLServer: Platform.LIGHT,
-    BtMeshModelId.ThermostatServer: Platform.CLIMATE,
-}
+#    BtMeshModelId.GenericBatteryServer: BtMeshModelId.get_name(BtMeshModelId.GenericBatteryServer),
+#    BtMeshModelId.SensorServer: Platform.SENSOR,
+#    BtMeshModelId.LightLightnessServer: Platform.LIGHT,
+#    BtMeshModelId.LightCTLServer: Platform.LIGHT,
+#    BtMeshModelId.LightHSLServer: Platform.LIGHT,
+#    BtMeshModelId.ThermostatServer: Platform.CLIMATE,
+#}
+
+SENSOR_MODELS: Final = (
+    BtMeshModelId.SensorServer,
+    BtMeshModelId.SensorSetupServer
+)
 
 
-
-SENSOR_DESCRIPTOR_SCHEME = vol.Schema(
+SENSOR_DESCRIPTOR_SCHEMA = vol.Schema(
     {
         vol.Required("sensor_property_id"): cv.positive_int,
         vol.Required("sensor_positive_tolerance"): cv.positive_int,
@@ -68,31 +76,36 @@ SENSOR_DESCRIPTOR_SCHEME = vol.Schema(
     }
 )
 
-DEVICE_SCHEME = vol.Schema(
+SENSOR_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_UNICAST_ADDR): cv.positive_int,
+        vol.Optional(CONF_UPDATE_TIME): cv.positive_int,
+        vol.Optional(CONF_KEEPALIVE_TIME): cv.positive_int,
         vol.Optional(CONF_SENSOR_DESCRIPTORS): vol.All(
             cv.ensure_list,
-            [SENSOR_DESCRIPTOR_SCHEME]
+            [SENSOR_DESCRIPTOR_SCHEMA]
         ),
-        vol.Optional(CONF_PASSIVE): cv.boolean
+    }
+)
+
+NODE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_UPDATE_TIME): cv.positive_int,
+        vol.Optional(CONF_KEEPALIVE_TIME): cv.positive_int,
+        vol.Optional(CONF_PASSIVE, default=False): cv.boolean,
+        vol.Optional("sensor", default={}): vol.Any(None, SENSOR_SCHEMA),
     },
     extra=vol.ALLOW_EXTRA
 )
 
 CONFIG_SCHEMA = vol.Schema(
     {
-        DOMAIN: vol.All(
-            vol.Schema(
-                {
-                    vol.Optional(CONF_DBUS_APP_PATH, default=DEFAULT_DBUS_APP_PATH): cv.string,
-                    vol.Optional(CONF_MESH_CFGCLIENT_CONFIG_PATH, default=DEFAULT_MESH_CFGCLIENT_CONFIG_PATH): cv.string,
-                    vol.Optional(CONF_ELEMENTS): vol.All(
-                        cv.ensure_list,
-                        [DEVICE_SCHEME],
-                    )
-                }
-            )
+        DOMAIN: vol.Schema(
+            {
+                vol.Optional(CONF_DBUS_APP_PATH, default=DEFAULT_DBUS_APP_PATH): cv.string,
+                vol.Optional(CONF_MESH_CFGCLIENT_CONFIG_PATH, default=DEFAULT_MESH_CFGCLIENT_CONFIG_PATH): cv.string,
+                vol.Optional(CONF_NODES, default={}): vol.Any(None, {cv.string: NODE_SCHEMA}),
+            },
+            extra=vol.ALLOW_EXTRA
         )
     },
     extra=vol.ALLOW_EXTRA
@@ -100,33 +113,19 @@ CONFIG_SCHEMA = vol.Schema(
 
 
 
+@dataclass
+class BtMeshData:
+    domain_conf: dict
+    app: BtMeshApplication
+    mesh_conf: MeshCfgclientConf
+    discovered: list
 
-class BtMeshConfElementsPassive:
-    _passive: dict
 
-    def __init__(self, hass: HomeAssistant) -> None:
-        try:
-            self._passive = {
-                f"{entry[CONF_UNICAST_ADDR]:04x}": entry[CONF_PASSIVE]
-                    for entry in hass.data[DOMAIN][BT_MESH_CONFIG][CONF_ELEMENTS]
-                        if CONF_PASSIVE in entry
-            }
-        except KeyError as e:
-            self.passive = dict()
-
-    def get(self, unicast_addr: int) -> bool:
-        return self._passive.get(f"{unicast_addr:04x}", False)
-
+type BtMeshConfigEntry = ConfigEntry[BtMeshData]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up integration from config."""
-
-    if DOMAIN in hass.data:
-        # one instance only
-        return False
-
-    logging.basicConfig(level=logging.DEBUG)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][BT_MESH_CONFIG] = config[DOMAIN]
@@ -137,40 +136,39 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
     """Set up BT Mesh from a config entry."""
 
-#    _LOGGER.debug("async_setup_entry(): entry_id=%s, entry_domain=%s, entry=%s" % (entry.entry_id, entry.domain, entry.data))
-
+#    _LOGGER.debug(f"async_setup_entry(): entry_id={entry.entry_id}, entry_domain={entry.domain}, entry={entry.data}")
 #    _LOGGER.debug(f"BT_MESH_CONFIG: {hass.data[DOMAIN][BT_MESH_CONFIG]}")
 #    _LOGGER.debug(f"filename = {entry.data[CONF_MESH_CFGCLIENT_CONFIG_PATH]}")
+
+    # create BtMesh application
+    app = BtMeshApplication(
+        hass,
+        uuid=entry.entry_id,                    # FIXME: is not UUID
+        path=entry.data[CONF_DBUS_APP_PATH],
+        token=entry.data[CONF_DBUS_APP_TOKEN]
+    )
 
     # create mesh network config
     mesh_conf = MeshCfgclientConf(
         filename=entry.data[CONF_MESH_CFGCLIENT_CONFIG_PATH]
     )
 
-    # create BtMesh application
-    application = BtMeshApplication(
-        hass,
-        uuid = entry.entry_id,
-        path=entry.data[CONF_DBUS_APP_PATH],
-        token=entry.data[CONF_DBUS_APP_TOKEN]
+    entry.runtime_data = BtMeshData(
+        domain_conf=hass.data[DOMAIN][BT_MESH_CONFIG],
+        app=app,
+        mesh_conf=mesh_conf,
+        discovered=[]
     )
-
-    hass.data[DOMAIN][entry.entry_id] = {
-        BT_MESH_CFGCLIENT_CONF: mesh_conf,
-        BT_MESH_APPLICATION: application,
-        BT_MESH_ALREADY_DISCOVERED: [],
-    }
 
     # Function: process exception
     try:
-        await application.dbus_connect()
-        await application.connect()
+        await app.dbus_connect()
+        await app.connect()
     except Exception as e:
         _LOGGER.error(f"Failed to connect to dBUS: {e}")
         return False
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
 
     # run task to track modifications to the Bt Mesh configuration file
     track_mesh_conf_task = entry.async_create_background_task(
@@ -180,211 +178,165 @@ async def async_setup_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bo
     )
 
     # FIXME: "track_mesh_conf_task" to constant
-    hass.data[DOMAIN][entry.entry_id]["track_mesh_conf_task"] = track_mesh_conf_task
+#    hass.data[DOMAIN][entry.entry_id]["track_mesh_conf_task"] = track_mesh_conf_task
 
     return True
 
 
 async def track_mesh_conf(hass: HomeAssistant, entry: BtMeshConfigEntry):
-    app = hass.data[DOMAIN][entry.entry_id][BT_MESH_APPLICATION]
-    mesh_conf = hass.data[DOMAIN][entry.entry_id][BT_MESH_CFGCLIENT_CONF]
-
-    load_sensors_config_task = None
+    devices_config_updated = True
+    sensors_config_updated = True
 
     """Reload Mesh network configuration task."""
     while True:
-        if mesh_conf.is_modified():
-#            _LOGGER.debug("reload_mesh_network_handler(), config modified")
+        if entry.runtime_data.mesh_conf.is_modified():
+            _LOGGER.debug("reload_mesh_network_handler(), config modified")
             try:
-                c = await hass.async_add_executor_job(mesh_conf.load)
-#                _LOGGER.debug(c)
-            except Exception as e:
-                _LOGGER.error(f"Fail to load Mesh Network config: {e}")
+                await hass.async_add_executor_job(entry.runtime_data.mesh_conf.load)
+                devices_config_updated = False
+                sensors_config_updated = False
+            except FileNotFoundError:
+                _LOGGER.error(f"Mesh Network config file not found:")
+                pass
 
+        # looking for a new devices on startup
+        if not devices_config_updated:
+            devices_config_updated = await load_devices_config(hass, entry)
 
-            # looking for a new devices on startup
-            load_devices_config_task = entry.async_create_background_task(
-                hass,
-                load_devices_config(hass, entry),
-                f"{DOMAIN}_{entry.title}_load_devices_config"
-            )
+        # looking for a new sensors on startup
+        if not sensors_config_updated:
+            sensors_config_updated = await load_sensors_config(hass, entry)
 
-            # looking for a new sensors on startup
-            load_sensors_config_task = entry.async_create_background_task(
-                hass,
-                load_sensors_config(hass, entry),
-                f"{DOMAIN}_{entry.title}_load_sensors_config"
-            )
-
-            # TODO: wait
-            await asyncio.wait((load_devices_config_task, load_sensors_config_task))
-
-            # TODO: remove unused devices
-#            await cleanup_device_registry(hass, entry)
+        # TODO: remove unused devices
+#        await cleanup_device_registry(hass, entry)
 
         await asyncio.sleep(5)
 
 
-async def load_devices_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
-    app = hass.data[DOMAIN][entry.entry_id][BT_MESH_APPLICATION]
-    mesh_conf = hass.data[DOMAIN][entry.entry_id][BT_MESH_CFGCLIENT_CONF]
-    device_registry = dr.async_get(hass)
+async def load_devices_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
+    _LOGGER.debug(f"load_devices_config(): start, {entry.runtime_data.domain_conf}")
 
-    # get passive flag from config
-    conf_elements_passive = BtMeshConfElementsPassive(hass)
-
-    cfg_models = mesh_conf.get_models()
-
-#    _LOGGER.debug("load_devices_config(): start")
-
-    for cfg_model in cfg_models:
-#        _LOGGER.debug(f"model: model_id={cfg_model.model_id}, {cfg_model.unique_id}")
+    for cfg_model in entry.runtime_data.mesh_conf.get_models():
+        _LOGGER.debug(f"model: model_id={cfg_model.model_id}, {cfg_model.unique_id}")
 
         # sensor model is loaded in dedicated task
-        if cfg_model.model_id == BtMeshModelId.SensorServer or cfg_model.model_id == BtMeshModelId.SensorSetupServer:
-#            _LOGGER.debug(f"    skip sensor")
+        if cfg_model.model_id in SENSOR_MODELS:
+            _LOGGER.debug(f"    skip sensor")
             continue
-
-#        if cfg_model.model_id == BtMeshModelId.GenericBatteryServer:
-#            _LOGGER.debug(f"### Load battery Server")
 
         # skip already discovered devices
-        if cfg_model.unique_id in hass.data[DOMAIN][entry.entry_id][BT_MESH_ALREADY_DISCOVERED]:
-#            _LOGGER.debug("    {cfg_model.unique_id} already discovered")
+        if cfg_model.unique_id in entry.runtime_data.discovered:
+            _LOGGER.debug("    {cfg_model.unique_id} already discovered")
             continue
 
-        # skip disabled devices
-        device = device_registry.async_get_device(
-            identifiers={(DOMAIN, str(cfg_model.device.unique_id))}
+        try:
+            node_conf = entry.runtime_data.domain_conf[CONF_NODES][f"{cfg_model.unicast_addr:04x}"]
+        except KeyError:
+            node_conf = {}
+
+        async_dispatcher_send(
+            hass,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(cfg_model.model_id),
+            *(entry.runtime_data.app, cfg_model, node_conf)
         )
-        if device and device.disabled_by:
-#            _LOGGER.debug("    disabled")
-            continue
 
-        if cfg_model.model_id in MODEL_ID_PLATFROM:
-#            _LOGGER.debug(f"    send {BT_MESH_DISCOVERY_ENTITY_NEW.format(MODEL_ID_PLATFROM[cfg_model.model_id])}")
-            passive = conf_elements_passive.get(cfg_model.unicast_addr)
-            async_dispatcher_send(
-                hass,
-                BT_MESH_DISCOVERY_ENTITY_NEW.format(MODEL_ID_PLATFROM[cfg_model.model_id]),
-                app,
-                cfg_model,
-                passive
-            )
-            hass.data[DOMAIN][entry.entry_id][BT_MESH_ALREADY_DISCOVERED].append(cfg_model.unique_id)
-#        else:
-#            _LOGGER.debug(f"    {cfg_model.model_id} not in platform")
+        entry.runtime_data.discovered.append(cfg_model.unique_id)
+
+    return True
 
 
-async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
-    app = hass.data[DOMAIN][entry.entry_id][BT_MESH_APPLICATION]
-    mesh_conf = hass.data[DOMAIN][entry.entry_id][BT_MESH_CFGCLIENT_CONF]
-    device_registry = dr.async_get(hass)
+async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
+    app = entry.runtime_data.app
+    mesh_conf = entry.runtime_data.mesh_conf
 
-    # get descriptors and passive flag from config
+    # get descriptors from config
     descriptors_conf = dict()
-    passive_cof = dict()
-    if CONF_ELEMENTS in hass.data[DOMAIN][BT_MESH_CONFIG]:
+    if CONF_NODES in entry.runtime_data.domain_conf:
         descriptors_conf = {
-            f"{entry[CONF_UNICAST_ADDR]:04x}": entry[CONF_SENSOR_DESCRIPTORS]
-                for entry in hass.data[DOMAIN][BT_MESH_CONFIG][CONF_ELEMENTS]
-                    if CONF_SENSOR_DESCRIPTORS in entry
-        }
-        passive_conf = {
-            f"{entry[CONF_UNICAST_ADDR]:04x}": entry[CONF_PASSIVE]
-                for entry in hass.data[DOMAIN][BT_MESH_CONFIG][CONF_ELEMENTS]
-                    if CONF_PASSIVE in entry
+            unicast_addr: node_conf[Platform.SENSOR][CONF_SENSOR_DESCRIPTORS]
+                for unicast_addr, node_conf in entry.runtime_data.domain_conf[CONF_NODES].items()
+                    if Platform.SENSOR in node_conf and \
+                        node_conf[Platform.SENSOR] is not None and \
+                        CONF_SENSOR_DESCRIPTORS in node_conf[Platform.SENSOR]
         }
 
     # get descriptors from persistent storage
     descriptors_store: Store[dict[int, Any]] = Store(hass, 1, "bt_mesh.sensor_descriptors")
     descriptors = await descriptors_store.async_load()
-    descriptors_updated: dict[int, Any] = dict()
 
-#    _LOGGER.debug("load_sensors_config(): start")
+    _LOGGER.debug("load_sensors_config(): start")
 
-    cfg_models = mesh_conf.get_models_by_model_id(BtMeshModelId.SensorServer)
-    cfg_models.extend(mesh_conf.get_models_by_model_id(BtMeshModelId.SensorSetupServer))
-#    _LOGGER.debug(f"load_sensors_config(): {cfg_models}")
+    cfg_models = []
+    for model_id in SENSOR_MODELS:
+        cfg_models.extend(mesh_conf.get_models_by_model_id(model_id))
+    _LOGGER.debug(f"load_sensors_config(): {cfg_models}")
 
-    while (True):
-        repeat = False
-        for cfg_model in cfg_models:
-            unicast_addr_key = f"{cfg_model.unicast_addr:04x}"
-            passive = True if unicast_addr_key in passive_conf and passive_conf[unicast_addr_key] else False
-#            _LOGGER.debug(f"sensor: unicast_addr={cfg_model.unicast_addr} model_id={cfg_model.model_id}, {cfg_model.unique_id}")
+    result = True
+    for cfg_model in cfg_models:
+        unicast_addr_key = f"{cfg_model.unicast_addr:04x}"
+        _LOGGER.debug(f"sensor: unicast_addr={cfg_model.unicast_addr:04x} model_id={cfg_model.model_id:04x}, {cfg_model.unique_id}")
 
-            # skip disabled devices
-            device_entry = device_registry.async_get_device(
-                identifiers={(DOMAIN, str(cfg_model.device.unique_id))}
+        # skip already discovered devices
+        if cfg_model.unique_id in entry.runtime_data.discovered:
+            _LOGGER.debug("    {cfg_model.unique_id} already discovered")
+            continue
+
+        try:
+            node_conf = entry.runtime_data.domain_conf[CONF_NODES][f"{cfg_model.unicast_addr:04x}"]
+        except KeyError:
+            node_conf = {}
+
+        # get descriptors from config
+        if unicast_addr_key in descriptors_conf:
+            _LOGGER.debug("    get descriptors from config")
+            sensor_descriptors = descriptors_conf[unicast_addr_key]
+        # get descriptors from local storage
+        elif descriptors is not None and unicast_addr_key in descriptors:
+            _LOGGER.debug("    get descriptors from local storage")
+            sensor_descriptors = descriptors[unicast_addr_key]
+        # get descriptors from device
+        else:
+            _LOGGER.debug("    get descriptors from device")
+            _sensor_descriptors = await app.sensor_descriptor_get(
+                destination=cfg_model.unicast_addr,
+                app_index=cfg_model.app_key,
             )
-            if device_entry and device_entry.disabled_by:
-#                _LOGGER.debug("    disabled")
-                continue
+            sensor_descriptors = [
+                {
+                    "sensor_property_id": propery.sensor_property_id,
+                    "sensor_positive_tolerance": propery.sensor_positive_tolerance,
+                    "sensor_negative_tolerance": propery.sensor_negative_tolerance,
+                    "sensor_sampling_funcion": propery.sensor_sampling_funcion,
+                    "sensor_measurement_period": propery.sensor_measurement_period,
+                    "sensor_update_interval": propery.sensor_update_interval,
+                }
+                for propery in _sensor_descriptors
+            ] if _sensor_descriptors else None
 
-            # get descriptors from config
-            if unicast_addr_key in descriptors_conf:
-                sensor_descriptors = descriptors_conf[unicast_addr_key]
-            # get descriptors from local storage
-            elif descriptors is not None and unicast_addr_key in descriptors:
-                sensor_descriptors = descriptors[unicast_addr_key]
-            # get descriptors from device
-            else:
-                _sensor_descriptors = await app.sensor_descriptor_get(
-                    destination=cfg_model.unicast_addr,
-                    app_index=cfg_model.app_key,
+        if sensor_descriptors:
+            descriptors[unicast_addr_key] = sensor_descriptors
+
+            for propery in sensor_descriptors:
+                property_id = int(propery["sensor_property_id"])
+
+                async_dispatcher_send(
+                    hass,
+                    BT_MESH_DISCOVERY_ENTITY_NEW.format(cfg_model.model_id),
+                    *(entry.runtime_data.app, cfg_model, propery, node_conf)
                 )
-                sensor_descriptors = [
-                    {
-                        "sensor_property_id": propery.sensor_property_id,
-                        "sensor_positive_tolerance": propery.sensor_positive_tolerance,
-                        "sensor_negative_tolerance": propery.sensor_negative_tolerance,
-                        "sensor_sampling_funcion": propery.sensor_sampling_funcion,
-                        "sensor_measurement_period": propery.sensor_measurement_period,
-                        "sensor_update_interval": propery.sensor_update_interval,
-                    }
-                    for propery in _sensor_descriptors
-                ] if _sensor_descriptors else None
 
-            if sensor_descriptors:
-                descriptors_updated[unicast_addr_key] = sensor_descriptors
-
-            # skip already discovered devices
-            if cfg_model.unique_id in hass.data[DOMAIN][entry.entry_id][BT_MESH_ALREADY_DISCOVERED]:
-                continue
-
-            try:
-                for propery in sensor_descriptors:
-                    property_id = int(propery["sensor_property_id"])
-                    sensor_update_interval = int(round(propery["sensor_update_interval"]))
-                    async_dispatcher_send(
-                        hass,
-                        BT_MESH_DISCOVERY_ENTITY_NEW.format(MODEL_ID_PLATFROM[BtMeshModelId.SensorServer]),
-                        app,
-                        cfg_model,
-                        property_id,
-                        sensor_update_interval,
-                        passive
-                    )
-
-                # mark model discovered
-                hass.data[DOMAIN][entry.entry_id][BT_MESH_ALREADY_DISCOVERED].append(cfg_model.unique_id)
-
-            except Exception as e:
-#                _LOGGER.debug("    fail to get descriptors for device %s, addr %04x: %s" % (cfg_model.device.uuid, cfg_model.device.unicast_addr, repr(e)))
-                repeat = True
-
-#        _LOGGER.debug(f"load_sensors_config(): repeat: {repeat}")
-
-        if not repeat:
-            break
-
-        await asyncio.sleep(5)
+            # mark model discovered
+            entry.runtime_data.discovered.append(cfg_model.unique_id)
+        else:
+            _LOGGER.debug(f"fail to get descriptors for device {cfg_model.device.unicast_addr:04x}")
+            result = False
 
     # save updated descriptors to persistent strage
-    await descriptors_store.async_save(descriptors_updated)
+    await descriptors_store.async_save(descriptors)
 
-#    _LOGGER.debug("load_sensors_config():no new devices - exit")
+    _LOGGER.debug(f"load_sensors_config(): finished, result={result}")
+
+    return result
 
 
 async def cleanup_device_registry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
@@ -421,6 +373,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> b
     """Unloading the Tuya platforms."""
 #    _LOGGER.debug(f"async_unload_entry(): {entry}")
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        ### FIXME: fail on reload!!!!
         runtime_data = hass.data[DOMAIN].pop(entry.entry_id)
         track_mesh_conf_task = runtime_data["track_mesh_conf_task"]
         if not track_mesh_conf_task.done():

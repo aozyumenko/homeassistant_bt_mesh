@@ -45,8 +45,8 @@ class BtMeshEntity(Entity):
     cfg_model: MeshCfgModel
     subs: list[([type], [int])]
     #update_threshold = 0.5
-    invalidate_timeout: float = G_MESH_CACHE_INVALIDATE_TIMEOUT
-    update_timeout: float = G_MESH_CACHE_UPDATE_TIMEOUT
+    invalidate_timeout: float
+    update_timeout: float
     passive: bool
 
     _lock: asyncio.Lock
@@ -58,12 +58,13 @@ class BtMeshEntity(Entity):
         self,
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
-        passive: bool = False
+        invalidate_timeout: float=G_MESH_CACHE_INVALIDATE_TIMEOUT,
+        update_timeout: float=G_MESH_CACHE_UPDATE_TIMEOUT,
+        passive: bool=False
     ) -> None:
         """Initialize model entity."""
         self.app = app
         self.cfg_model = cfg_model
-        self.passive = passive
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, str(self.cfg_model.device.unique_id))},
@@ -86,19 +87,33 @@ class BtMeshEntity(Entity):
         self._last_update = None
         self._model_state = None
 
+        self.invalidate_timeout = invalidate_timeout
+        self.update_timeout = update_timeout
+        self.passive = passive
+
+        self._attr_available = False
+
+        _LOGGER.debug(f"BtMeshEntity: {self.name} invalidate_timeout={invalidate_timeout}, update_timeout={update_timeout}, passive={passive}")
+
+    async def async_added_to_hass(self) -> None:
+        """Connect to an updater."""
+        _LOGGER.debug(f"async_added_to_hass()")
+        # FIXME: rework for coordinator
         if hasattr(self, 'status_opcodes'):
             for opcode in self.status_opcodes:
                 async_dispatcher_connect(
-                    app.hass,
+                    self.app.hass,
                     BT_MESH_MSG.format(self.unicast_addr, opcode),
                     self.receive_message,
                 )
 
         async_dispatcher_connect(
-            app.hass,
+            self.app.hass,
             BT_MESH_INVALIDATE.format(self.unicast_addr),
             self.invalidate_model_state,
         )
+
+        self._query_model_state()
 
     def receive_message(
         self,
@@ -168,13 +183,13 @@ class BtMeshEntity(Entity):
         async def query_model_state_task():
             async with self._lock:
                 state = await self.query_model_state()
-#                _LOGGER.debug(f"Get {self.name} state: {repr(state)} [{time.time():f}]")
+                _LOGGER.debug(f"Get {self.name} state: {repr(state)} [{time.time():f}]")
                 if state is not None:
                     self.update_model_state(state)
 
         if not self.passive:
             if not self._lock.locked():
-#                _LOGGER.debug(f"Querye model state {self.name}")
+                _LOGGER.debug(f"Querye model state {self.name}")
                 self.app.hass.create_task(query_model_state_task())
 #        else:
 #            _LOGGER.debug(f"{self.name} is passive, ignore query")

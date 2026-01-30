@@ -40,8 +40,11 @@ from .entity import BtMeshEntity, ClassNotFoundError
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
     BT_MESH_MSG,
-    G_SEND_INTERVAL,
-    G_TIMEOUT,
+    CONF_UPDATE_TIME,
+    CONF_KEEPALIVE_TIME,
+    CONF_PASSIVE,
+    G_MESH_CACHE_UPDATE_TIMEOUT,
+    G_MESH_CACHE_INVALIDATE_TIMEOUT,
 )
 
 import logging
@@ -57,50 +60,78 @@ async def async_setup_entry(
     """Set up the BT MESH sensor entry."""
 
     @callback
-    def async_add_sensor(
-        app: BtMeshApplication,
-        cfg_model: MeshCfgModel,
-        property_id: PropertyID,
-        update_period: int,
-        passive: bool
-    ) -> None:
-#        _LOGGER.error(f"### SENSOR: {cfg_model.unicast_addr}.{property_id}")
-        try:
-            sensor_entity = BtMeshSensorEntityFactory.get(property_id)(
-                app,
-                cfg_model,
-                update_period,
-                passive
-            )
-            async_add_entities([sensor_entity])
-        except ClassNotFoundError as e:
-#            _LOGGER.error(f"failed to create BtMeshSensorEntity {cfg_model.unicast_addr}.{property_id:04x}: {repr(e)}")
-            pass
-
-
-    @callback
     def async_add_generic_battery(
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
-        passive: bool
+        node_conf: dict
     ) -> None:
-#        _LOGGER.error(f"### BATTERY: {cfg_model.unicast_addr}")
-        async_add_entities([BtMeshGenericBatteryEntity(app, cfg_model, passive)])
+        platform_conf = node_conf.get(Platform.SENSOR, None) or {}
+        invalidate_timeout = platform_conf.get(CONF_UPDATE_TIME, \
+            node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT))
+        update_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
+            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT))
+        passive = node_conf.get(CONF_PASSIVE, False)
 
+        async_add_entities(
+            [
+                BtMeshGenericBatteryEntity(
+                    app=app,
+                    cfg_model=cfg_model,
+                    invalidate_timeout=invalidate_timeout,
+                    update_timeout=update_timeout,
+                    passive=passive
+                )
+            ]
+        )
+
+    @callback
+    def async_add_sensor(
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        propery: dict,
+        node_conf: dict
+    ) -> None:
+        property_id = propery["sensor_property_id"]
+        update_interval = propery["sensor_update_interval"]
+
+        platform_conf = node_conf.get(Platform.SENSOR, None) or {}
+        invalidate_timeout = platform_conf.get(CONF_UPDATE_TIME, \
+            node_conf.get(CONF_UPDATE_TIME, update_interval))
+        update_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
+            node_conf.get(CONF_KEEPALIVE_TIME, update_interval * 2.5))
+        passive = node_conf.get(CONF_PASSIVE, False)
+
+        try:
+            sensor_entity = BtMeshSensorEntityFactory.get(property_id)(
+                app=app,
+                cfg_model=cfg_model,
+                invalidate_timeout=invalidate_timeout,
+                update_timeout=update_timeout,
+                passive=passive
+            )
+            async_add_entities([sensor_entity])
+        except ClassNotFoundError as e:
+            _LOGGER.error(f"failed to create BtMeshSensorEntity {cfg_model.unicast_addr}.{property_id:04x}: {repr(e)}")
 
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
-            BT_MESH_DISCOVERY_ENTITY_NEW.format(Platform.SENSOR),
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.GenericBatteryServer),
+            async_add_generic_battery,
+        )
+    )
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.SensorServer),
             async_add_sensor,
         )
     )
-
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
-            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.get_name(BtMeshModelId.GenericBatteryServer)),
-            async_add_generic_battery,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.SensorSetupServer),
+            async_add_sensor,
         )
     )
 
@@ -123,18 +154,6 @@ class BtMeshGenericBatteryEntity(BtMeshEntity, SensorEntity):
     status_opcodes = (
         GenericBatteryOpcode.GENERIC_BATTERY_STATUS,
     )
-
-    def __init__(
-        self,
-        app: BtMeshApplication,
-        cfg_model: MeshCfgModel,
-        passive: bool
-    ) -> None:
-        if cfg_model.model_id != BtMeshModelId.GenericBatteryServer:
-            raise ValueError("cfg_model.model_id must be GenericBatteryServer")
-
-        BtMeshEntity.__init__(self, app, cfg_model, passive)
-        self._attr_available = False
 
     async def query_model_state(self) -> any:
         """Query GenericBattery state."""
@@ -163,25 +182,12 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
         SensorOpcode.SENSOR_DESCRIPTOR_STATUS,
     )
 
-    def __init__(
-        self,
-        app: BtMeshApplication,
-        cfg_model: MeshCfgModel,
-        update_period: int,
-        passive: bool
-    ) -> None:
-        if cfg_model.model_id != BtMeshModelId.SensorServer and \
-                cfg_model.model_id != BtMeshModelId.SensorSetupServer:
-            raise ValueError("cfg_model.model_id must be SensorServer or SensorSetupServer")
-
-        BtMeshEntity.__init__(self, app, cfg_model, passive)
+    def __init__(self, *args, **kwargs) -> None:
+        BtMeshEntity.__init__(self, *args, **kwargs)
 
         # update sensor unique_id and name attributes
         self._attr_unique_id = f"{self.cfg_model.unicast_addr:04x}-{self.cfg_model.model_id:04x}-{self.property_id}-{str(self.cfg_model.device.uuid)}"
         self._attr_name = f"{self.cfg_model.unicast_addr:04x}-{BtMeshModelId.get_name(self.cfg_model.model_id)}-{BtSensorAttrPropertyId.get_name(self.property_id)}"
-        self._attr_available = False
-
-        self.update_timeout = update_period
 
     def receive_message(
         self,

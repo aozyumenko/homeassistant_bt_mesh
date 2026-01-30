@@ -4,6 +4,9 @@ from __future__ import annotations
 import asyncio
 from uuid import UUID
 
+#from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
+
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from bluetooth_mesh.application import Application, Element, Capabilities
@@ -53,6 +56,13 @@ _LOGGER = logging.getLogger(__name__)
 
 # FIXME: for debug
 import time
+
+
+
+
+@dataclass
+class BtMeshData:
+    app: BtMeshApplication
 
 
 

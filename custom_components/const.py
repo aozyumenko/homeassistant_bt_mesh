@@ -29,10 +29,12 @@ BT_MESH_ALREADY_DISCOVERED: Final = "bt_mesh_already_discovered"
 CONF_DBUS_APP_PATH: Final = "dbus_app_path"
 CONF_DBUS_APP_TOKEN: Final = "dbus_app_token"
 CONF_MESH_CFGCLIENT_CONFIG_PATH: Final = "cfgclient_config_path"
-CONF_ELEMENTS: Final = "elements"
+CONF_NODES: Final = "nodes"
 CONF_UNICAST_ADDR: Final = "unicast_addr"
 CONF_SENSOR_DESCRIPTORS: Final = "sensor_descriptors"
 CONF_PASSIVE: Final = "passive"
+CONF_UPDATE_TIME: Final = "update_time"
+CONF_KEEPALIVE_TIME: Final = "keepalive_time"
 
 # config file defaults
 DEFAULT_DBUS_APP_PATH: Final = "/mesh/homeassistant/client0"
