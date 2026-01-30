@@ -44,22 +44,23 @@ class BtMeshEntity(Entity):
     app: BtMeshApplication
     cfg_model: MeshCfgModel
     subs: list[([type], [int])]
-    #update_threshold = 0.5
-    invalidate_timeout: float
+
+    _model_state: any
     update_timeout: float
+    invalidate_timeout: float
     passive: bool
+    #update_threshold = 0.5
 
     _lock: asyncio.Lock
     _task: asyncio.Task
     _last_update: [float | None]
-    _model_state: any
 
     def __init__(
         self,
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
-        invalidate_timeout: float=G_MESH_CACHE_INVALIDATE_TIMEOUT,
         update_timeout: float=G_MESH_CACHE_UPDATE_TIMEOUT,
+        invalidate_timeout: float=G_MESH_CACHE_INVALIDATE_TIMEOUT,
         passive: bool=False
     ) -> None:
         """Initialize model entity."""

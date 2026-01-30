@@ -22,12 +22,12 @@ from .application import BtMeshApplication
 from .entity import BtMeshEntity
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
+    CONF_UPDATE_TIME,
+    CONF_KEEPALIVE_TIME,
     G_SEND_INTERVAL,
     G_TIMEOUT,
     G_MESH_CACHE_UPDATE_TIMEOUT,
     G_MESH_CACHE_INVALIDATE_TIMEOUT,
-    CONF_UPDATE_TIME,
-    CONF_KEEPALIVE_TIME,
 )
 
 import logging
@@ -49,9 +49,9 @@ async def async_setup_entry(
         node_conf: dict
     ) -> None:
         platform_conf = node_conf.get(Platform.SWITCH, None) or {}
-        invalidate_timeout = platform_conf.get(CONF_UPDATE_TIME, \
+        update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
             node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT))
-        update_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
+        invalidate_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
             node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT))
 
         add_entities(
@@ -59,8 +59,8 @@ async def async_setup_entry(
                 BtMeshSwitch_GenericOnOff(
                     app=app,
                     cfg_model=cfg_model,
-                    invalidate_timeout=invalidate_timeout,
-                    update_timeout=update_timeout
+                    update_timeout=update_timeout,
+                    invalidate_timeout=invalidate_timeout
                 )
             ]
         )

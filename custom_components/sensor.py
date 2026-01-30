@@ -66,9 +66,9 @@ async def async_setup_entry(
         node_conf: dict
     ) -> None:
         platform_conf = node_conf.get(Platform.SENSOR, None) or {}
-        invalidate_timeout = platform_conf.get(CONF_UPDATE_TIME, \
+        update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
             node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT))
-        update_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
+        invalidate_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
             node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT))
         passive = node_conf.get(CONF_PASSIVE, False)
 
@@ -77,8 +77,8 @@ async def async_setup_entry(
                 BtMeshGenericBatteryEntity(
                     app=app,
                     cfg_model=cfg_model,
-                    invalidate_timeout=invalidate_timeout,
                     update_timeout=update_timeout,
+                    invalidate_timeout=invalidate_timeout,
                     passive=passive
                 )
             ]
@@ -95,9 +95,9 @@ async def async_setup_entry(
         update_interval = propery["sensor_update_interval"]
 
         platform_conf = node_conf.get(Platform.SENSOR, None) or {}
-        invalidate_timeout = platform_conf.get(CONF_UPDATE_TIME, \
+        update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
             node_conf.get(CONF_UPDATE_TIME, update_interval))
-        update_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
+        invalidate_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
             node_conf.get(CONF_KEEPALIVE_TIME, update_interval * 2.5))
         passive = node_conf.get(CONF_PASSIVE, False)
 
@@ -105,8 +105,8 @@ async def async_setup_entry(
             sensor_entity = BtMeshSensorEntityFactory.get(property_id)(
                 app=app,
                 cfg_model=cfg_model,
-                invalidate_timeout=invalidate_timeout,
                 update_timeout=update_timeout,
+                invalidate_timeout=invalidate_timeout,
                 passive=passive
             )
             async_add_entities([sensor_entity])

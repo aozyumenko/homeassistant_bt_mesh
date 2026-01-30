@@ -60,9 +60,9 @@ async def async_setup_entry(
         node_conf: dict
     ) -> None:
         platform_conf = node_conf.get(Platform.LIGHT, None) or {}
-        invalidate_timeout = platform_conf.get(CONF_UPDATE_TIME, \
+        update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
             node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT))
-        update_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
+        invalidate_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
             node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT))
 
         add_entities(
@@ -70,8 +70,8 @@ async def async_setup_entry(
                 BtMeshClimate_Thermostat(
                     app=app,
                     cfg_model=cfg_model,
-                    invalidate_timeout=invalidate_timeout,
                     update_timeout=update_timeout,
+                    invalidate_timeout=invalidate_timeout
                 )
             ]
         )
