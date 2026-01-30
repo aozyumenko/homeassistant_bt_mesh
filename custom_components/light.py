@@ -41,6 +41,11 @@ from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
     DEFAULT_LIGHT_BRIGHTNESS,
     DEFAULT_LIGHT_TEMPERATURE,
+
+    G_MESH_CACHE_UPDATE_TIMEOUT,
+    G_MESH_CACHE_INVALIDATE_TIMEOUT,
+    CONF_UPDATE_TIME,
+    CONF_KEEPALIVE_TIME,
 )
 
 import logging
@@ -59,22 +64,49 @@ async def async_setup_entry(
     def async_add_light(
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
-        passive: bool
+        node_conf: dict
     ) -> None:
+        platform_conf = node_conf.get(Platform.LIGHT, None) or {}
+        update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
+            node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT))
+        invalidate_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
+            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT))
+
         try:
-            add_entities([BtMeshLightEntityFactory.get(cfg_model.model_id)(app, cfg_model, passive)])
+            add_entities(
+                [
+                    BtMeshLightEntityFactory.get(cfg_model.model_id)(
+                        app=app,
+                        cfg_model=cfg_model,
+                        update_timeout=update_timeout,
+                        invalidate_timeout=invalidate_timeout
+                    )
+                ]
+            )
         except ClassNotFoundError as e:
             _LOGGER.error(f"failed to get BtMeshLightEntity object for model {BtMeshModelId.get_name(cfg_model.model_id)}")
-            pass
 
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
-            BT_MESH_DISCOVERY_ENTITY_NEW.format(Platform.LIGHT),
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.LightLightnessServer),
             async_add_light,
         )
     )
-
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.LightCTLServer),
+            async_add_light,
+        )
+    )
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.LightHSLServer),
+            async_add_light,
+        )
+    )
     return True
 
 

@@ -22,8 +22,12 @@ from .application import BtMeshApplication
 from .entity import BtMeshEntity
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
+    CONF_UPDATE_TIME,
+    CONF_KEEPALIVE_TIME,
     G_SEND_INTERVAL,
     G_TIMEOUT,
+    G_MESH_CACHE_UPDATE_TIMEOUT,
+    G_MESH_CACHE_INVALIDATE_TIMEOUT,
 )
 
 import logging
@@ -42,14 +46,29 @@ async def async_setup_entry(
     def async_add_switch(
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
-        passive: bool
+        node_conf: dict
     ) -> None:
-        add_entities([BtMeshSwitch_GenericOnOff(app, cfg_model, passive)])
+        platform_conf = node_conf.get(Platform.SWITCH, None) or {}
+        update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
+            node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT))
+        invalidate_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
+            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT))
+
+        add_entities(
+            [
+                BtMeshSwitch_GenericOnOff(
+                    app=app,
+                    cfg_model=cfg_model,
+                    update_timeout=update_timeout,
+                    invalidate_timeout=invalidate_timeout
+                )
+            ]
+        )
 
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
-            BT_MESH_DISCOVERY_ENTITY_NEW.format(Platform.SWITCH),
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.GenericOnOffServer),
             async_add_switch,
         )
     )
@@ -63,18 +82,6 @@ class BtMeshSwitch_GenericOnOff(BtMeshEntity, SwitchEntity):
     status_opcodes = (
         GenericOnOffOpcode.GENERIC_ONOFF_STATUS,
     )
-
-    def __init__(
-        self,
-        app: BtMeshApplication,
-        cfg_model: MeshCfgModel,
-        passive: bool
-    ) -> None:
-        if cfg_model.model_id != BtMeshModelId.GenericOnOffServer:
-            raise ValueError("cfg_model.model_id must be GenericOnOffServer")
-
-        BtMeshEntity.__init__(self, app, cfg_model, passive)
-        self._attr_available = False
 
     async def query_model_state(self) -> any:
         """Query GenericOnOff state."""
