@@ -52,7 +52,8 @@ class BtMeshEntity(Entity):
     #update_threshold = 0.5
 
     _lock: asyncio.Lock
-    _task: asyncio.Task
+    #_task: asyncio.Task
+    _query_task: asyncio.Task
     _last_update: [float | None]
 
     def __init__(
@@ -83,7 +84,8 @@ class BtMeshEntity(Entity):
         self._attr_name = self.cfg_model.name
 
         self._lock = asyncio.Lock()
-        self._task = None
+        #self._task = None
+        self._query_task = None
 
         self._last_update = None
         self._model_state = None
@@ -189,11 +191,13 @@ class BtMeshEntity(Entity):
                     self.update_model_state(state)
 
         if not self.passive:
-            if not self._lock.locked():
+            if self._query_task is None or self._query_task.done():
+                self._query_task = self.app.hass.async_create_task(query_model_state_task())
                 _LOGGER.debug(f"Querye model state {self.name}")
-                self.app.hass.create_task(query_model_state_task())
-#        else:
-#            _LOGGER.debug(f"{self.name} is passive, ignore query")
+            else:
+                _LOGGER.debug(f"{self.name} already running, ignore query")
+        else:
+            _LOGGER.debug(f"{self.name} is passive, ignore query")
 
 
     async def query_model_state(self) -> any:

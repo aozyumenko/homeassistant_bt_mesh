@@ -37,6 +37,10 @@ from .entity import BtMeshEntity
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
     BT_MESH_MSG,
+    CONF_UPDATE_TIME,
+    CONF_KEEPALIVE_TIME,
+    G_MESH_CACHE_UPDATE_TIMEOUT,
+    G_MESH_CACHE_INVALIDATE_TIMEOUT,
     G_SEND_INTERVAL,
     G_TIMEOUT,
 )
@@ -79,7 +83,7 @@ async def async_setup_entry(
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
-            BT_MESH_DISCOVERY_ENTITY_NEW.format(Platform.CLIMATE),
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.ThermostatServer),
             async_add_climate,
         )
     )
