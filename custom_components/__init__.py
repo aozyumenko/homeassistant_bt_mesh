@@ -1,11 +1,9 @@
 """BT Mesh integration."""
 from __future__ import annotations
 
-
 import asyncio
 import voluptuous as vol
 from typing import Final
-#from dataclasses import asdict, dataclass, field
 from dataclasses import dataclass
 
 from homeassistant.core import HomeAssistant, callback
@@ -13,22 +11,19 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er
 from homeassistant.const import Platform
 from homeassistant.helpers.storage import Store
-
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-
-from .application import BtMeshApplication
 from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgclientConf
 from bt_mesh_ctrl import BtMeshModelId
 
+from .application import BtMeshApplication
 
 from .const import (
     DOMAIN,
     PLATFORMS,
     BT_MESH_CONFIG,
-    BT_MESH_APPLICATION,
-    BT_MESH_CFGCLIENT_CONF,
-    BT_MESH_ALREADY_DISCOVERED,
+#    BT_MESH_APPLICATION,
+#    BT_MESH_CFGCLIENT_CONF,
     CONF_DBUS_APP_PATH,
     CONF_DBUS_APP_TOKEN,
     CONF_MESH_CFGCLIENT_CONFIG_PATH,
@@ -43,21 +38,9 @@ from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
 )
 
-
 import logging
 _LOGGER = logging.getLogger(__name__)
 
-
-#MODEL_ID_PLATFROM: Final = {
-#    BtMeshModelId.GenericOnOffServer: Platform.SWITCH,
-#    BtMeshModelId.GenericLevelServer: Platform.COVER,
-#    BtMeshModelId.GenericBatteryServer: BtMeshModelId.get_name(BtMeshModelId.GenericBatteryServer),
-#    BtMeshModelId.SensorServer: Platform.SENSOR,
-#    BtMeshModelId.LightLightnessServer: Platform.LIGHT,
-#    BtMeshModelId.LightCTLServer: Platform.LIGHT,
-#    BtMeshModelId.LightHSLServer: Platform.LIGHT,
-#    BtMeshModelId.ThermostatServer: Platform.CLIMATE,
-#}
 
 SENSOR_MODELS: Final = (
     BtMeshModelId.SensorServer,
@@ -157,7 +140,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bo
         domain_conf=hass.data[DOMAIN][BT_MESH_CONFIG],
         app=app,
         mesh_conf=mesh_conf,
-        discovered=[]
+        discovered=set()
     )
 
     # Function: process exception
@@ -184,6 +167,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bo
 
 
 async def track_mesh_conf(hass: HomeAssistant, entry: BtMeshConfigEntry):
+    """The task of tracking changes to the configuration file and then 
+       configuring new devices and removing unused ones."""
     devices_config_updated = True
     sensors_config_updated = True
 
@@ -207,16 +192,20 @@ async def track_mesh_conf(hass: HomeAssistant, entry: BtMeshConfigEntry):
         if not sensors_config_updated:
             sensors_config_updated = await load_sensors_config(hass, entry)
 
-        # TODO: remove unused devices
-#        await cleanup_device_registry(hass, entry)
+        # remove unbinded models and unprovisioned devices
+        await cleanup_device_registry(hass, entry)
+
+#        await cleanup_entity_registry(hass, entry)
 
         await asyncio.sleep(5)
 
 
 async def load_devices_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
+    """Loading node models (except the sensor) from the config and adding them to the HA."""
+    mesh_conf = entry.runtime_data.mesh_conf
     _LOGGER.debug(f"load_devices_config(): start, {entry.runtime_data.domain_conf}")
 
-    for cfg_model in entry.runtime_data.mesh_conf.get_models():
+    for cfg_model in mesh_conf.get_models():
         _LOGGER.debug(f"model: model_id={cfg_model.model_id}, {cfg_model.unique_id}")
 
         # sensor model is loaded in dedicated task
@@ -240,12 +229,13 @@ async def load_devices_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
             *(entry.runtime_data.app, cfg_model, node_conf)
         )
 
-        entry.runtime_data.discovered.append(cfg_model.unique_id)
+        entry.runtime_data.discovered.add(cfg_model.unique_id)
 
     return True
 
 
 async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
+    """Loading sensor models (except the sensor) from the config and adding them to the HA."""
     app = entry.runtime_data.app
     mesh_conf = entry.runtime_data.mesh_conf
 
@@ -326,7 +316,7 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
                 )
 
             # mark model discovered
-            entry.runtime_data.discovered.append(cfg_model.unique_id)
+            entry.runtime_data.discovered.add(cfg_model.unique_id)
         else:
             _LOGGER.debug(f"fail to get descriptors for device {cfg_model.device.unicast_addr:04x}")
             result = False
@@ -339,64 +329,31 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
     return result
 
 
+async def cleanup_entity_registry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
+    """...."""
+    mesh_conf =  entry.runtime_data.mesh_conf
+
+    cfg_models = mesh_conf.get_models()
+
+    entity_reg = er.async_get(hass)
+    entries = er.async_entries_for_config_entry(entity_reg, entry.entry_id)
+    for reg_entry in entries:
+        _LOGGER.debug(f"cleanup_entity_registry() {reg_entry.unique_id}")
+        pass
+
+
 async def cleanup_device_registry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
     """Remove deleted device registry entry if there are no remaining entities."""
-
-    app = hass.data[DOMAIN][entry.entry_id][BT_MESH_APPLICATION]
-    mesh_conf = hass.data[DOMAIN][entry.entry_id][BT_MESH_CFGCLIENT_CONF]
-
+    mesh_conf =  entry.runtime_data.mesh_conf
     device_registry = dr.async_get(hass)
 
-    # FIXME: cfg_devices_uuid -> cfg_device_unique_id
-    cfg_devices_uuid = [str(cfg_device.unique_id) for cfg_device in mesh_conf.get_devices()]
+    provisioned_devices: set[str] = set(
+        [str(cfg_device.unique_id) for cfg_device in mesh_conf.get_devices()]
+    )
 
-    good = 0;
-    bad = 0
-    devices = list()
-    for dev_id, device_entry in list(device_registry.devices.items()):
-#        _LOGGER.debug(device_entry)
-        for item in device_entry.identifiers:
-            if item[0] == DOMAIN and item[1] not in cfg_devices_uuid:
-                _LOGGER.debug(f"-------- drop device {dev_id} - {item[1]}")
-                bad += 1
-            elif item[0] == DOMAIN and item[1] in cfg_devices_uuid:
-#                _LOGGER.debug(f"++++++++ save device {dev_id} - {item[1]}")
-                good +=1
-
-#    _LOGGER.debug(f"good={good}, bad={bad}")
-
-    pass
-
-
-
-async def async_unload_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
-    """Unloading the Tuya platforms."""
-#    _LOGGER.debug(f"async_unload_entry(): {entry}")
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        ### FIXME: fail on reload!!!!
-        runtime_data = hass.data[DOMAIN].pop(entry.entry_id)
-        track_mesh_conf_task = runtime_data["track_mesh_conf_task"]
-        if not track_mesh_conf_task.done():
-            track_mesh_conf_task.cancel()
-        application = runtime_data[BT_MESH_APPLICATION]
-        await application.dbus_disconnect()
-
-    return unload_ok
-
-#async def async_remove_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
-#    """Remove a config entry.
-
-#    This will revoke the credentials from Tuya.
-#    """
-#    _LOGGER.debug(f"async_remove_entry()")
-#    pass
-
-
-#async def async_remove_config_entry_device(
-#    hass: HomeAssistant, config_entry: BtMeshConfigEntry, device_entry: dr.DeviceEntry
-#) -> bool:
-#    """Remove BT Mesh config entry from a device."""
-#
-#    _LOGGER.debug(f"async_remove_config_entry_device(): {device_entry}")
-#
-#    return True
+    device_registry = dr.async_get(hass)
+    for device_entry in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        for identifier in device_entry.identifiers:
+            if identifier[0] == DOMAIN and identifier[1] not in provisioned_devices:
+                device_registry.async_remove_device(device_entry.id)
+                _LOGGER.debug(f"cleanup_device_registry(): removed_devices, id={device_entry.id}, identifier={identifier[1]}")
