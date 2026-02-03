@@ -215,7 +215,7 @@ async def load_devices_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
 
         # skip already discovered devices
         if cfg_model.unique_id in entry.runtime_data.discovered:
-            _LOGGER.debug("    {cfg_model.unique_id} already discovered")
+            _LOGGER.debug(f"    {cfg_model.unique_id} already discovered")
             continue
 
         try:
@@ -254,7 +254,7 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
     descriptors_store: Store[dict[int, Any]] = Store(hass, 1, "bt_mesh.sensor_descriptors")
     descriptors = await descriptors_store.async_load()
 
-    _LOGGER.debug("load_sensors_config(): start")
+    _LOGGER.debug(f"load_sensors_config(): start")
 
     cfg_models = []
     for model_id in SENSOR_MODELS:
@@ -268,7 +268,7 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
 
         # skip already discovered devices
         if cfg_model.unique_id in entry.runtime_data.discovered:
-            _LOGGER.debug("    {cfg_model.unique_id} already discovered")
+            _LOGGER.debug(f"    {cfg_model.unique_id} already discovered")
             continue
 
         try:
@@ -357,3 +357,11 @@ async def cleanup_device_registry(hass: HomeAssistant, entry: BtMeshConfigEntry)
             if identifier[0] == DOMAIN and identifier[1] not in provisioned_devices:
                 device_registry.async_remove_device(device_entry.id)
                 _LOGGER.debug(f"cleanup_device_registry(): removed_devices, id={device_entry.id}, identifier={identifier[1]}")
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
+    """Unloading the BT Mesh platforms."""
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        app = entry.runtime_data.app
+        await app.dbus_disconnect()
+    return unload_ok
