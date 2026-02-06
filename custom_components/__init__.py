@@ -13,17 +13,17 @@ from homeassistant.const import Platform
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
+from bluetooth_mesh.messages.properties import PropertyID
+
 from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgclientConf
 from bt_mesh_ctrl import BtMeshModelId
 
 from .application import BtMeshApplication
-
+from .entity import BtMeshEntity
 from .const import (
     DOMAIN,
     PLATFORMS,
     BT_MESH_CONFIG,
-#    BT_MESH_APPLICATION,
-#    BT_MESH_CFGCLIENT_CONF,
     CONF_DBUS_APP_PATH,
     CONF_DBUS_APP_TOKEN,
     CONF_MESH_CFGCLIENT_CONFIG_PATH,
@@ -33,6 +33,7 @@ from .const import (
     CONF_PASSIVE,
     CONF_UPDATE_TIME,
     CONF_KEEPALIVE_TIME,
+    STORAGE_SENSOR_DESCRIPTORS,
     DEFAULT_DBUS_APP_PATH,
     DEFAULT_MESH_CFGCLIENT_CONFIG_PATH,
     BT_MESH_DISCOVERY_ENTITY_NEW,
@@ -40,6 +41,7 @@ from .const import (
 
 import logging
 _LOGGER = logging.getLogger(__name__)
+
 
 
 SENSOR_MODELS: Final = (
@@ -160,9 +162,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bo
         f"{DOMAIN}_{entry.title}_track_mesh_conf"
     )
 
-    # FIXME: "track_mesh_conf_task" to constant
-#    hass.data[DOMAIN][entry.entry_id]["track_mesh_conf_task"] = track_mesh_conf_task
-
     return True
 
 
@@ -180,6 +179,10 @@ async def track_mesh_conf(hass: HomeAssistant, entry: BtMeshConfigEntry):
                 await hass.async_add_executor_job(entry.runtime_data.mesh_conf.load)
                 devices_config_updated = False
                 sensors_config_updated = False
+
+                # remove unbinded models and unprovisioned devices
+                await cleanup_entity_registry(hass, entry)
+                await cleanup_device_registry(hass, entry)
             except FileNotFoundError:
                 _LOGGER.error(f"Mesh Network config file not found:")
                 pass
@@ -192,10 +195,6 @@ async def track_mesh_conf(hass: HomeAssistant, entry: BtMeshConfigEntry):
         if not sensors_config_updated:
             sensors_config_updated = await load_sensors_config(hass, entry)
 
-        # remove unbinded models and unprovisioned devices
-        await cleanup_device_registry(hass, entry)
-
-#        await cleanup_entity_registry(hass, entry)
 
         await asyncio.sleep(5)
 
@@ -251,7 +250,7 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
         }
 
     # get descriptors from persistent storage
-    descriptors_store: Store[dict[int, Any]] = Store(hass, 1, "bt_mesh.sensor_descriptors")
+    descriptors_store: Store[dict[int, Any]] = Store(hass, 1, STORAGE_SENSOR_DESCRIPTORS)
     descriptors = await descriptors_store.async_load()
 
     _LOGGER.debug(f"load_sensors_config(): start")
@@ -259,20 +258,14 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
     cfg_models = []
     for model_id in SENSOR_MODELS:
         cfg_models.extend(mesh_conf.get_models_by_model_id(model_id))
-    _LOGGER.debug(f"load_sensors_config(): {cfg_models}")
 
     result = True
     for cfg_model in cfg_models:
         unicast_addr_key = f"{cfg_model.unicast_addr:04x}"
-        _LOGGER.debug(f"sensor: unicast_addr={cfg_model.unicast_addr:04x} model_id={cfg_model.model_id:04x}, {cfg_model.unique_id}")
-
-        # skip already discovered devices
-        if cfg_model.unique_id in entry.runtime_data.discovered:
-            _LOGGER.debug(f"    {cfg_model.unique_id} already discovered")
-            continue
+        _LOGGER.debug(f"sensor device: {cfg_model.name}")
 
         try:
-            node_conf = entry.runtime_data.domain_conf[CONF_NODES][f"{cfg_model.unicast_addr:04x}"]
+            node_conf = entry.runtime_data.domain_conf[CONF_NODES][unicast_addr_key]
         except KeyError:
             node_conf = {}
 
@@ -305,9 +298,13 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
 
         if sensor_descriptors:
             descriptors[unicast_addr_key] = sensor_descriptors
-
             for propery in sensor_descriptors:
-                property_id = int(propery["sensor_property_id"])
+                unique_id = BtMeshEntity.unique_id_sensor(cfg_model, PropertyID(propery["sensor_property_id"]))
+
+                # skip already discovered sensors
+                if unique_id in entry.runtime_data.discovered:
+                    _LOGGER.debug(f"    {unique_id} already discovered")
+                    continue
 
                 async_dispatcher_send(
                     hass,
@@ -315,8 +312,8 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
                     *(entry.runtime_data.app, cfg_model, propery, node_conf)
                 )
 
-            # mark model discovered
-            entry.runtime_data.discovered.add(cfg_model.unique_id)
+                # mark sensor discovered
+                entry.runtime_data.discovered.add(unique_id)
         else:
             _LOGGER.debug(f"fail to get descriptors for device {cfg_model.device.unicast_addr:04x}")
             result = False
@@ -330,22 +327,48 @@ async def load_sensors_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> 
 
 
 async def cleanup_entity_registry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
-    """...."""
+    """Remove deleted or unbinded models from entity registry."""
     mesh_conf =  entry.runtime_data.mesh_conf
+    entity_registry = er.async_get(hass)
 
+    # get descriptors from persistent storage
+    descriptors_store: Store[dict[int, Any]] = Store(hass, 1, STORAGE_SENSOR_DESCRIPTORS)
+    descriptors = await descriptors_store.async_load()
+
+    # load list of entities unique id from Bed Mesh config
+    configured_models = set()
     cfg_models = mesh_conf.get_models()
+    for cfg_model in mesh_conf.get_models():
+        if cfg_model.model_id in SENSOR_MODELS:
+            unicast_addr_key = f"{cfg_model.unicast_addr:04x}"
+            if unicast_addr_key in descriptors:
+                for propery in descriptors[unicast_addr_key]:
+                    configured_models.add(
+                        BtMeshEntity.unique_id_sensor(
+                            cfg_model,
+                            PropertyID(propery["sensor_property_id"])
+                        )
+                    )
+        else:
+            configured_models.add(BtMeshEntity.unique_id_generic(cfg_model))
 
-    entity_reg = er.async_get(hass)
-    entries = er.async_entries_for_config_entry(entity_reg, entry.entry_id)
+    # remove unused entities from registry
+    entries = er.async_entries_for_config_entry(entity_registry, entry.entry_id)
     for reg_entry in entries:
-        _LOGGER.debug(f"cleanup_entity_registry() {reg_entry.unique_id}")
-        pass
+        if reg_entry.unique_id not in configured_models:
+            _LOGGER.debug(f"remove entity: {reg_entry.entity_id}")
+            entity_registry.async_remove(reg_entry.entity_id)
+            entry.runtime_data.discovered.discard(reg_entry.unique_id)
 
 
 async def cleanup_device_registry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> None:
     """Remove deleted device registry entry if there are no remaining entities."""
     mesh_conf =  entry.runtime_data.mesh_conf
     device_registry = dr.async_get(hass)
+
+    # get descriptors from persistent storage
+    descriptors_store: Store[dict[int, Any]] = Store(hass, 1, STORAGE_SENSOR_DESCRIPTORS)
+    descriptors = await descriptors_store.async_load()
 
     provisioned_devices: set[str] = set(
         [str(cfg_device.unique_id) for cfg_device in mesh_conf.get_devices()]
@@ -355,8 +378,13 @@ async def cleanup_device_registry(hass: HomeAssistant, entry: BtMeshConfigEntry)
     for device_entry in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
         for identifier in device_entry.identifiers:
             if identifier[0] == DOMAIN and identifier[1] not in provisioned_devices:
+                unicast_addr_key = device_entry.name.removeprefix(f"{DOMAIN}_")
+                descriptors.pop(unicast_addr_key, None)
                 device_registry.async_remove_device(device_entry.id)
-                _LOGGER.debug(f"cleanup_device_registry(): removed_devices, id={device_entry.id}, identifier={identifier[1]}")
+                _LOGGER.debug(f"removed_device: id={device_entry.id}")
+
+    # save updated descriptors to persistent strage
+    await descriptors_store.async_save(descriptors)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
