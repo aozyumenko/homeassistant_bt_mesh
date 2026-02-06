@@ -20,10 +20,9 @@ BT_MESH_INVALIDATE: Final = "bt_mesh_invalidate.{:x}"
 
 # domain data keys
 BT_MESH_CONFIG: Final = "config"
-BT_MESH_APPLICATION: Final = "application"
-BT_MESH_CFGCLIENT_CONF: Final = "mesh_cfgclient_conf"
-BT_MESH_ALREADY_DISCOVERED: Final = "bt_mesh_already_discovered"
-
+#BT_MESH_APPLICATION: Final = "application"
+#BT_MESH_CFGCLIENT_CONF: Final = "mesh_cfgclient_conf"
+#BT_MESH_ALREADY_DISCOVERED: Final = "bt_mesh_already_discovered"
 
 # config keys
 CONF_DBUS_APP_PATH: Final = "dbus_app_path"
@@ -35,6 +34,8 @@ CONF_SENSOR_DESCRIPTORS: Final = "sensor_descriptors"
 CONF_PASSIVE: Final = "passive"
 CONF_UPDATE_TIME: Final = "update_time"
 CONF_KEEPALIVE_TIME: Final = "keepalive_time"
+
+STORAGE_SENSOR_DESCRIPTORS:Final = "bt_mesh.sensor_descriptors"
 
 # config file defaults
 DEFAULT_DBUS_APP_PATH: Final = "/mesh/homeassistant/client0"

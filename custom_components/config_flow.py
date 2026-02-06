@@ -52,7 +52,7 @@ class BtMeshConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self.app = BtMeshApplication(
                 hass=self.hass,
                 path=self.config[CONF_DBUS_APP_PATH],
-                # FixMe: put derive UUID to application
+                # TODO: put derive UUID to application
                 uuid=str(uuid.uuid5(
                     uuid.NAMESPACE_DNS,
                     socket.gethostname()

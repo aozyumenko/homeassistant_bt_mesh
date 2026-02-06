@@ -91,8 +91,8 @@ async def async_setup_entry(
         propery: dict,
         node_conf: dict
     ) -> None:
-        property_id = propery["sensor_property_id"]
-        update_interval = propery["sensor_update_interval"]
+        property_id = PropertyID(propery["sensor_property_id"])
+        update_interval = float(propery["sensor_update_interval"])
 
         platform_conf = node_conf.get(Platform.SENSOR, None) or {}
         update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
@@ -186,8 +186,8 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
         BtMeshEntity.__init__(self, *args, **kwargs)
 
         # update sensor unique_id and name attributes
-        self._attr_unique_id = f"{self.cfg_model.unicast_addr:04x}-{self.cfg_model.model_id:04x}-{self.property_id}-{str(self.cfg_model.device.uuid)}"
-        self._attr_name = f"{self.cfg_model.unicast_addr:04x}-{BtMeshModelId.get_name(self.cfg_model.model_id)}-{BtSensorAttrPropertyId.get_name(self.property_id)}"
+        self._attr_unique_id = BtMeshEntity.unique_id_sensor(self.cfg_model, self.property_id)
+        self._attr_name = BtMeshEntity.name_sensor(self.cfg_model, self.property_id)
 
     def receive_message(
         self,
@@ -373,9 +373,9 @@ class BtMeshSensor_Present_Outdoor_Relative_Humidity(BtMeshSensorEntity):
 
 class BtMeshSensorEntityFactory(object):
     @staticmethod
-    def get(property_id: int) -> object:
-        if type(property_id) != int:
-            raise ValueError("property_id must be int")
+    def get(property_id: PropertyID) -> object:
+        if type(property_id) != PropertyID:
+            raise ValueError("property_id must be PropertyID")
 
         raw_subclasses_ = BtMeshSensorEntity.__subclasses__()
         classes: dict[int, Callable[..., object]] = {c.property_id:c for c in raw_subclasses_}
