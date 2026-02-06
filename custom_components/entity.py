@@ -7,6 +7,7 @@ import time
 from typing import Union
 from uuid import UUID
 
+from bluetooth_mesh.messages.properties import PropertyID
 from bluetooth_mesh.utils import ParsedMeshMessage
 
 from homeassistant.helpers.entity import Entity, DeviceInfo
@@ -15,7 +16,11 @@ from homeassistant.helpers.dispatcher import (
     async_dispatcher_send,
 )
 
-from bt_mesh_ctrl import BtMeshModelId, BtMeshOpcode
+from bt_mesh_ctrl import (
+    BtMeshModelId,
+    BtMeshOpcode,
+    BtSensorAttrPropertyId,
+)
 from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 from bt_mesh_ctrl.product import product
 
@@ -56,6 +61,23 @@ class BtMeshEntity(Entity):
     _query_task: asyncio.Task
     _last_update: [float | None]
 
+    @staticmethod
+    def unique_id_generic(cfg_model: MeshCfgModel) -> str:
+        return cfg_model.unique_id
+
+    @staticmethod
+    def name_generic(cfg_model: MeshCfgModel) -> str:
+        return cfg_model.name
+
+    @staticmethod
+    def unique_id_sensor(cfg_model: MeshCfgModel, property_id: PropertyID) -> str:
+        return f"{cfg_model.unicast_addr:04x}-{cfg_model.model_id:04x}-{property_id}-{str(cfg_model.device.uuid)}"
+
+    @staticmethod
+    def name_sensor(cfg_model: MeshCfgModel, property_id: PropertyID) -> str:
+        return f"{cfg_model.unicast_addr:04x}-{BtMeshModelId.get_name(cfg_model.model_id)}-{BtSensorAttrPropertyId.get_name(property_id)}"
+
+
     def __init__(
         self,
         app: BtMeshApplication,
@@ -80,8 +102,8 @@ class BtMeshEntity(Entity):
             model_id=f"{self.cfg_model.device.cid:04x}:{self.cfg_model.device.pid:04x}",
             sw_version=f"{self.cfg_model.device.vid:04x}",
         )
-        self._attr_unique_id = self.cfg_model.unique_id
-        self._attr_name = self.cfg_model.name
+        self._attr_unique_id = BtMeshEntity.unique_id_generic(self.cfg_model)
+        self._attr_name = BtMeshEntity.name_generic(self.cfg_model)
 
         self._lock = asyncio.Lock()
         #self._task = None
@@ -101,7 +123,7 @@ class BtMeshEntity(Entity):
     async def async_added_to_hass(self) -> None:
         """Connect to an updater."""
         _LOGGER.debug(f"async_added_to_hass()")
-        # FIXME: rework for coordinator
+        # TODO: rework for coordinator
         if hasattr(self, 'status_opcodes'):
             for opcode in self.status_opcodes:
                 async_dispatcher_connect(
