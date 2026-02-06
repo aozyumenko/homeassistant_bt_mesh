@@ -50,19 +50,8 @@ from .const import (
     BT_MESH_MSG,
 )
 
-
 import logging
 _LOGGER = logging.getLogger(__name__)
-
-# FIXME: for debug
-import time
-
-
-
-
-@dataclass
-class BtMeshData:
-    app: BtMeshApplication
 
 
 
@@ -176,7 +165,7 @@ class BtMeshApplication(Application, TimeServerMixin):
         # start Time Server
         self.time_server_init()
 
-        # ...
+        # register message callbacks on all supported opcodes
         for sub in self.subs:
             client = self.elements[0][sub[0]]
             opcode = sub[1]
@@ -185,12 +174,13 @@ class BtMeshApplication(Application, TimeServerMixin):
 
     ##################################################
     def display_numeric(self, type: str, number: int):
-        """...."""
+        """Application callback to show requested PIN code."""
         if self.pin_cb:
             self.pin_cb._cb_display_numeric(type, number)
 
     async def mesh_join(self, pin_cb=None):
-        """...."""
+        """A callback to notify the application that the joining
+           process has completed successfully."""
         self.pin_cb = pin_cb
         async with self:
             token = await self.join()
