@@ -235,6 +235,7 @@ class BtMeshApplication(Application, TimeServerMixin):
     # GenericOnOff client
     @bluetooth_mesh_get
     async def generic_onoff_get(self, destination: int, app_index: int) -> any:
+        """Get GenericOnOff state"""
         client = self.elements[0][GenericOnOffClient]
         return await client.get(
             destination=destination,
@@ -259,6 +260,35 @@ class BtMeshApplication(Application, TimeServerMixin):
             onoff=onoff,
             delay=None if transition_time is None else 0,
             transition_time=transition_time,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    # GenericPowerOnOff client
+    @bluetooth_mesh_get
+    async def generic_ponoff_get(self, destination: int, app_index: int) -> any:
+        """Get GenericPowerOnOff state"""
+        client = self.elements[0][GenericPowerOnOffClient]
+        return await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_set
+    async def generic_ponoff_set(
+        self,
+        destination: int,
+        app_index: int,
+        on_power_up: GenericOnPowerUp
+    ) -> any:
+        """Set GenericPowerOnOff state"""
+        client = self.elements[0][GenericPowerOnOffClient]
+        return await client.set(
+            destination=destination,
+            app_index=app_index,
+            on_power_up=on_power_up,
             send_interval=G_SEND_INTERVAL,
             timeout=G_TIMEOUT
         )

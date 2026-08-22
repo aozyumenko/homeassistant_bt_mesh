@@ -9,6 +9,7 @@ DOMAIN: Final = "bt_mesh"
 PLATFORMS: Final = (
     Platform.SWITCH,
     Platform.LIGHT,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.CLIMATE,
@@ -54,3 +55,6 @@ G_UNACK_INTERVAL: Final = 0.05
 
 G_MESH_CACHE_UPDATE_TIMEOUT: Final = 15
 G_MESH_CACHE_INVALIDATE_TIMEOUT: Final = 360
+
+G_MESH_CACHE_UPDATE_LONG_TIMEOUT: Final = 360
+G_MESH_CACHE_INVALIDATE_LONG_TIMEOUT: Final = 4320
