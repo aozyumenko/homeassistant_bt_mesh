@@ -111,8 +111,8 @@ class BtMeshSwitch_GenericPowerOnOff(BtMeshEntity, SelectEntity):
         else:
             self._attr_available = True
 
-        if self.model_state.on_power_up in REV_POWERON_STATES:
-            self._attr_current_option = REV_POWERON_STATES[self.model_state.on_power_up]
+            if self.model_state.on_power_up in REV_POWERON_STATES:
+                self._attr_current_option = REV_POWERON_STATES[self.model_state.on_power_up]
 
 
     async def async_select_option(self, option: str) -> None:

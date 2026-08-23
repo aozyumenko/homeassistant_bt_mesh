@@ -22,6 +22,7 @@ BT_MESH_INVALIDATE: Final = "bt_mesh_invalidate.{:x}"
 
 # domain data keys
 BT_MESH_CONFIG: Final = "config"
+BT_MESH_HEALTH_FAULT_IDS: FInal = "health_fault_ids"
 #BT_MESH_APPLICATION: Final = "application"
 #BT_MESH_CFGCLIENT_CONF: Final = "mesh_cfgclient_conf"
 #BT_MESH_ALREADY_DISCOVERED: Final = "bt_mesh_already_discovered"
@@ -38,6 +39,7 @@ CONF_UPDATE_TIME: Final = "update_time"
 CONF_KEEPALIVE_TIME: Final = "keepalive_time"
 
 STORAGE_SENSOR_DESCRIPTORS:Final = "bt_mesh.sensor_descriptors"
+STORAGE_HEALTH_FAULT_IDS: Final = "health_fault_ids.yaml"
 
 # config file defaults
 DEFAULT_DBUS_APP_PATH: Final = "/mesh/homeassistant/client0"

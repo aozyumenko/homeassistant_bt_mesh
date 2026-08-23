@@ -18,6 +18,21 @@
           "Restore": "Восстановить состояние"
         }
       }
+    },
+    "sensor": {
+      "health": {
+        "name": "Состояние",
+        "state": {
+          "ok": "Ok",
+          "error": "Ошибка"
+        },
+        "state_attributes": {
+          "errors_list": {
+            "name": "Список кодов ошибок"
+          }
+        }
+
+      }
     }
   }
 }

@@ -18,6 +18,20 @@
           "Restore": "Restore state"
         }
       }
+    },
+    "sensor": {
+      "health": {
+        "name": "Status",
+        "state": {
+          "ok": "Оk",
+          "error": "Error"
+        },
+        "state_attributes": {
+          "errors_list": {
+            "name": "Error codes list"
+          }
+        }
+      }
     }
   }
 }

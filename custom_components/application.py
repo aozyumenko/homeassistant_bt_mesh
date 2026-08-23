@@ -24,6 +24,7 @@ from bluetooth_mesh.models.light.ctl import LightCTLClient
 from bluetooth_mesh.models.light.hsl import LightHSLClient
 from bluetooth_mesh.models.vendor.thermostat import ThermostatClient
 from bluetooth_mesh.models.time import TimeServer, TimeSetupServer
+from bluetooth_mesh.messages.health import HealthOpcode
 from bluetooth_mesh.messages.generic.onoff import GenericOnOffOpcode
 from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
 from bluetooth_mesh.messages.light.lightness import LightLightnessOpcode
@@ -117,6 +118,8 @@ class BtMeshApplication(Application, TimeServerMixin):
     hass: HomeAssistant
 
     subs = (
+        (HealthClient, HealthOpcode.HEALTH_CURRENT_STATUS),
+        (HealthClient, HealthOpcode.HEALTH_FAULT_STATUS),
         (GenericOnOffClient, GenericOnOffOpcode.GENERIC_ONOFF_STATUS),
         (GenericBatteryClient, GenericBatteryOpcode.GENERIC_BATTERY_STATUS),
         (SensorClient, SensorOpcode.SENSOR_STATUS),

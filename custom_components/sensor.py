@@ -5,6 +5,7 @@ from typing import Union, Callable
 from uuid import UUID
 
 from bluetooth_mesh.messages.properties import PropertyID
+from bluetooth_mesh.messages.health import HealthOpcode
 from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
 from bluetooth_mesh.messages.sensor import SensorOpcode
 from bluetooth_mesh.utils import ParsedMeshMessage
@@ -36,12 +37,14 @@ from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 from .application import BtMeshApplication
 from .entity import BtMeshEntity, ClassNotFoundError
 from .const import (
+    DOMAIN,
     BT_MESH_DISCOVERY_ENTITY_NEW,
     CONF_UPDATE_TIME,
     CONF_KEEPALIVE_TIME,
     CONF_PASSIVE,
     G_MESH_CACHE_UPDATE_TIMEOUT,
     G_MESH_CACHE_INVALIDATE_TIMEOUT,
+    BT_MESH_HEALTH_FAULT_IDS
 )
 
 import logging
@@ -54,6 +57,29 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     """Set up the BT MESH sensor entry."""
+
+    @callback
+    def async_add_health(
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        node_conf: dict
+    ) -> None:
+        platform_conf = node_conf.get(Platform.SENSOR, None) or {}
+        invalidate_timeout = platform_conf.get(
+            CONF_KEEPALIVE_TIME,
+            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT)
+        )
+
+        async_add_entities(
+            [
+                BtMeshHealthEntity(
+                    app=app,
+                    cfg_model=cfg_model,
+                    invalidate_timeout=invalidate_timeout,
+                    passive=True
+                )
+            ]
+        )
 
     @callback
     def async_add_generic_battery(
@@ -120,6 +146,13 @@ async def async_setup_entry(
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.HealthServer),
+            async_add_health,
+        )
+    )
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
             BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.GenericBatteryServer),
             async_add_generic_battery,
         )
@@ -140,6 +173,51 @@ async def async_setup_entry(
     )
 
     return True
+
+
+# BT Mesh Health Server
+class BtMeshHealthEntity(BtMeshEntity, SensorEntity):
+    """Class for Bluetooth Mesh Health."""
+
+    _attr_translation_key = "health"
+
+    entity_description = SensorEntityDescription(
+        key="health",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        name="Node Health",
+    )
+
+    status_opcodes = (
+        HealthOpcode.HEALTH_CURRENT_STATUS,
+    )
+
+    async def async_update(self) -> None:
+        """Fetch new state data for the sensor."""
+        if self.model_state is not None:
+            self._attr_available = True
+            fault_array = self.model_state.fault_array
+
+            if fault_array:
+                company_id = self.model_state.company_id
+                health_fault_ids = self.hass.data.get(DOMAIN, {}).get(BT_MESH_HEALTH_FAULT_IDS, {})
+                standard_ids = health_fault_ids.get("standard", {})
+                vendor_ids = health_fault_ids.get("vendors", {}).get(company_id, {})
+
+                errors_list = []
+                for code in fault_array:
+                    resolved_text = vendor_ids.get(code) or standard_ids.get(code)
+                    if resolved_text:
+                        errors_list.append(resolved_text)
+                    else:
+                        errors_list.append(f"Error (Vendor: {company_id:04x}, Code: {code:04x})")
+
+                self._attr_native_value = "error"
+                self._attr_extra_state_attributes = {"errors_list": errors_list}
+            else:
+                self._attr_native_value = "ok"
+                self._attr_extra_state_attributes = None
+        else:
+            self._attr_available = False
 
 
 # BT Mesh Generic Battery Server

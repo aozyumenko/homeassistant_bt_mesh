@@ -139,7 +139,6 @@ class BtMeshBinarySensorEntity(BtMeshEntity, BinarySensorEntity):
         """Extract sensor value from response."""
         try:
             prop = self.model_state
-            _LOGGER.debug(f"prop={prop}")
             for key in self.argument_keys:
                 prop = prop[key]
             return bool(prop)
