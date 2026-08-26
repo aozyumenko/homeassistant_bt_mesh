@@ -1,6 +1,7 @@
 """BT MESH sensor integration"""
 from __future__ import annotations
 
+import os
 from typing import Union, Callable
 from uuid import UUID
 
@@ -14,6 +15,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.util.yaml import load_yaml
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -28,6 +31,7 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfPower,
     UnitOfTemperature,
+    UnitOfPressure,
     Platform,
 )
 
@@ -44,7 +48,8 @@ from .const import (
     CONF_PASSIVE,
     G_MESH_CACHE_UPDATE_TIMEOUT,
     G_MESH_CACHE_INVALIDATE_TIMEOUT,
-    BT_MESH_HEALTH_FAULT_IDS
+    STORAGE_HEALTH_FAULT_IDS,
+    BT_MESH_HEALTH_FAULT_IDS,
 )
 
 import logging
@@ -141,8 +146,22 @@ async def async_setup_entry(
             )
             async_add_entities([sensor_entity])
         except ClassNotFoundError as e:
-            _LOGGER.error(f"failed to create BtMeshSensorEntity {cfg_model.unicast_addr}.{property_id:04x}: {repr(e)}")
+            _LOGGER.debug(f"failed to create BtMeshSensorEntity {cfg_model.unicast_addr:04x}.{property_id:04x}: {repr(e)}")
 
+    # loading Health Fault IDs from file
+    domain_data = hass.data.setdefault(DOMAIN, {})
+
+    if BT_MESH_HEALTH_FAULT_IDS not in domain_data:
+        current_dir = os.path.dirname(__file__)
+        yaml_path = os.path.join(current_dir, STORAGE_HEALTH_FAULT_IDS)
+        try:
+            storage_fault_ids = await hass.async_add_executor_job(load_yaml, yaml_path)
+        except HomeAssistantError as err:
+            _LOGGER.error(f"Failed to load {STORAGE_HEALTH_FAULT_IDS}: {err}")
+            storage_fault_ids = {}
+        domain_data[BT_MESH_HEALTH_FAULT_IDS] = storage_fault_ids
+
+    # setting dispatchers for sensors
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
@@ -191,8 +210,19 @@ class BtMeshHealthEntity(BtMeshEntity, SensorEntity):
         HealthOpcode.HEALTH_CURRENT_STATUS,
     )
 
-    async def async_update(self) -> None:
-        """Fetch new state data for the sensor."""
+
+    @callback
+    def receive_message(
+        self,
+        source: int,
+        app_index: int,
+        destination: Union[int, UUID],
+        message: ParsedMeshMessage
+    ):
+        """Received a new state data for the sensor."""
+
+        super().receive_message(source, app_index, destination, message)
+
         if self.model_state is not None:
             self._attr_available = True
             fault_array = self.model_state.fault_array
@@ -218,6 +248,8 @@ class BtMeshHealthEntity(BtMeshEntity, SensorEntity):
                 self._attr_extra_state_attributes = None
         else:
             self._attr_available = False
+
+        self.async_write_ha_state()
 
 
 # BT Mesh Generic Battery Server
@@ -271,6 +303,7 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
         self._attr_unique_id = BtMeshEntity.unique_id_sensor(self.cfg_model, self.property_id)
         self._attr_name = BtMeshEntity.name_sensor(self.cfg_model, self.property_id)
 
+    @callback
     def receive_message(
         self,
         source: int,
@@ -441,6 +474,20 @@ class BtMeshSensor_Present_Outdoor_Relative_Humidity(BtMeshSensorEntity):
         name="Outdoor humidity",
     )
     argument_keys = ["present_outdoor_relative_humidity", "humidity"]
+
+
+class BtMeshSensor_Presssure(BtMeshSensorEntity):
+    """Pressure sensor"""
+
+    property_id = PropertyID.PRESSURE
+    entity_description = SensorEntityDescription(
+        key="pressure",
+        device_class=SensorDeviceClass.PRESSURE,
+        native_unit_of_measurement=UnitOfPressure.PA,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Pressure",
+    )
+    argument_keys = ["pressure", "pressure"]
 
 
 class BtMeshSensorEntityFactory(object):

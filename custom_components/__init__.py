@@ -1,7 +1,6 @@
 """BT Mesh integration."""
 from __future__ import annotations
 
-import os
 import asyncio
 import voluptuous as vol
 from typing import Final
@@ -13,7 +12,6 @@ from homeassistant.helpers import config_validation as cv, device_registry as dr
 from homeassistant.const import Platform
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.util.yaml import load_yaml
 
 from bluetooth_mesh.messages.properties import PropertyID
 
@@ -118,16 +116,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][BT_MESH_CONFIG] = config[DOMAIN]
-
-    # loading Health Fault IDs from file
-    current_dir = os.path.dirname(__file__)
-    yaml_path = os.path.join(current_dir, STORAGE_HEALTH_FAULT_IDS)
-    try:
-        storage_fault_ids = await hass.async_add_executor_job(load_yaml, yaml_path)
-    except HomeAssistantError as err:
-        _LOGGER.error(f"Failed to load {STORAGE_HEALTH_FAULT_IDS}: {err}")
-        storage_fault_ids = {}
-    hass.data[DOMAIN][BT_MESH_HEALTH_FAULT_IDS] = storage_fault_ids
 
     return True
 

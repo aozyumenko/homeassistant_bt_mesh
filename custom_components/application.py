@@ -199,8 +199,9 @@ class BtMeshApplication(Application, TimeServerMixin):
         destination: Union[int, UUID],
         message: ParsedMeshMessage
     ):
-        """Passing messages to Bt mesh entities."""
-        async_dispatcher_send(
+        """Passing messages to Bt mesh entities safely across threads."""
+        self.hass.loop.call_soon_threadsafe(
+            async_dispatcher_send,
             self.hass,
             BT_MESH_MSG.format(source, message.opcode),
             source,
