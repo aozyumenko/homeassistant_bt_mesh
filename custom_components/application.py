@@ -24,6 +24,7 @@ from bluetooth_mesh.models.light.ctl import LightCTLClient
 from bluetooth_mesh.models.light.hsl import LightHSLClient
 from bluetooth_mesh.models.vendor.thermostat import ThermostatClient
 from bluetooth_mesh.models.time import TimeServer, TimeSetupServer
+from bluetooth_mesh.messages.health import HealthOpcode
 from bluetooth_mesh.messages.generic.onoff import GenericOnOffOpcode
 from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
 from bluetooth_mesh.messages.light.lightness import LightLightnessOpcode
@@ -117,6 +118,8 @@ class BtMeshApplication(Application, TimeServerMixin):
     hass: HomeAssistant
 
     subs = (
+        (HealthClient, HealthOpcode.HEALTH_CURRENT_STATUS),
+        (HealthClient, HealthOpcode.HEALTH_FAULT_STATUS),
         (GenericOnOffClient, GenericOnOffOpcode.GENERIC_ONOFF_STATUS),
         (GenericBatteryClient, GenericBatteryOpcode.GENERIC_BATTERY_STATUS),
         (SensorClient, SensorOpcode.SENSOR_STATUS),
@@ -196,8 +199,9 @@ class BtMeshApplication(Application, TimeServerMixin):
         destination: Union[int, UUID],
         message: ParsedMeshMessage
     ):
-        """Passing messages to Bt mesh entities."""
-        async_dispatcher_send(
+        """Passing messages to Bt mesh entities safely across threads."""
+        self.hass.loop.call_soon_threadsafe(
+            async_dispatcher_send,
             self.hass,
             BT_MESH_MSG.format(source, message.opcode),
             source,
@@ -235,6 +239,7 @@ class BtMeshApplication(Application, TimeServerMixin):
     # GenericOnOff client
     @bluetooth_mesh_get
     async def generic_onoff_get(self, destination: int, app_index: int) -> any:
+        """Get GenericOnOff state"""
         client = self.elements[0][GenericOnOffClient]
         return await client.get(
             destination=destination,
@@ -259,6 +264,35 @@ class BtMeshApplication(Application, TimeServerMixin):
             onoff=onoff,
             delay=None if transition_time is None else 0,
             transition_time=transition_time,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    # GenericPowerOnOff client
+    @bluetooth_mesh_get
+    async def generic_ponoff_get(self, destination: int, app_index: int) -> any:
+        """Get GenericPowerOnOff state"""
+        client = self.elements[0][GenericPowerOnOffClient]
+        return await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_set
+    async def generic_ponoff_set(
+        self,
+        destination: int,
+        app_index: int,
+        on_power_up: GenericOnPowerUp
+    ) -> any:
+        """Set GenericPowerOnOff state"""
+        client = self.elements[0][GenericPowerOnOffClient]
+        return await client.set(
+            destination=destination,
+            app_index=app_index,
+            on_power_up=on_power_up,
             send_interval=G_SEND_INTERVAL,
             timeout=G_TIMEOUT
         )

@@ -7,5 +7,31 @@
     "progress": {
       "join_start": "Waiting for the provision to start..."
     }
+  },
+  "entity": {
+    "select": {
+      "on_power_up": {
+        "name": "Power Up behavior",
+        "state": {
+          "Off": "Off",
+          "On": "On",
+          "Restore": "Restore state"
+        }
+      }
+    },
+    "sensor": {
+      "health": {
+        "name": "Status",
+        "state": {
+          "ok": "Оk",
+          "error": "Error"
+        },
+        "state_attributes": {
+          "errors_list": {
+            "name": "Error codes list"
+          }
+        }
+      }
+    }
   }
 }

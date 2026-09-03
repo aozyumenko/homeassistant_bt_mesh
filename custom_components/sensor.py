@@ -1,20 +1,22 @@
 """BT MESH sensor integration"""
 from __future__ import annotations
 
-import asyncio
-
-from construct import Container
+import os
+from typing import Union, Callable
+from uuid import UUID
 
 from bluetooth_mesh.messages.properties import PropertyID
+from bluetooth_mesh.messages.health import HealthOpcode
 from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
 from bluetooth_mesh.messages.sensor import SensorOpcode
-from bluetooth_mesh.models.generic.battery import GenericBatteryClient
-from bluetooth_mesh.models.sensor import SensorClient
+from bluetooth_mesh.utils import ParsedMeshMessage
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.util.yaml import load_yaml
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -29,27 +31,29 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfPower,
     UnitOfTemperature,
+    UnitOfPressure,
     Platform,
 )
 
-from bt_mesh_ctrl import BtMeshModelId, BtSensorAttrPropertyId, BtMeshOpcode
+from bt_mesh_ctrl import BtMeshModelId, BtMeshOpcode
 from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 
 from .application import BtMeshApplication
 from .entity import BtMeshEntity, ClassNotFoundError
 from .const import (
+    DOMAIN,
     BT_MESH_DISCOVERY_ENTITY_NEW,
-    BT_MESH_MSG,
     CONF_UPDATE_TIME,
     CONF_KEEPALIVE_TIME,
     CONF_PASSIVE,
     G_MESH_CACHE_UPDATE_TIMEOUT,
     G_MESH_CACHE_INVALIDATE_TIMEOUT,
+    STORAGE_HEALTH_FAULT_IDS,
+    BT_MESH_HEALTH_FAULT_IDS,
 )
 
 import logging
 _LOGGER = logging.getLogger(__name__)
-
 
 
 async def async_setup_entry(
@@ -60,16 +64,43 @@ async def async_setup_entry(
     """Set up the BT MESH sensor entry."""
 
     @callback
+    def async_add_health(
+        app: BtMeshApplication,
+        cfg_model: MeshCfgModel,
+        node_conf: dict
+    ) -> None:
+        platform_conf = node_conf.get(Platform.SENSOR, None) or {}
+        invalidate_timeout = platform_conf.get(
+            CONF_KEEPALIVE_TIME,
+            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT)
+        )
+
+        async_add_entities(
+            [
+                BtMeshHealthEntity(
+                    app=app,
+                    cfg_model=cfg_model,
+                    invalidate_timeout=invalidate_timeout,
+                    passive=True
+                )
+            ]
+        )
+
+    @callback
     def async_add_generic_battery(
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
         node_conf: dict
     ) -> None:
         platform_conf = node_conf.get(Platform.SENSOR, None) or {}
-        update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
-            node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT))
-        invalidate_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
-            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT))
+        update_timeout = platform_conf.get(
+            CONF_UPDATE_TIME,
+            node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT)
+        )
+        invalidate_timeout = platform_conf.get(
+            CONF_KEEPALIVE_TIME,
+            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT)
+        )
         passive = node_conf.get(CONF_PASSIVE, False)
 
         async_add_entities(
@@ -95,10 +126,14 @@ async def async_setup_entry(
         update_interval = float(propery["sensor_update_interval"])
 
         platform_conf = node_conf.get(Platform.SENSOR, None) or {}
-        update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
-            node_conf.get(CONF_UPDATE_TIME, update_interval))
-        invalidate_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
-            node_conf.get(CONF_KEEPALIVE_TIME, update_interval * 2.5))
+        update_timeout = platform_conf.get(
+            CONF_UPDATE_TIME,
+            node_conf.get(CONF_UPDATE_TIME, update_interval)
+        )
+        invalidate_timeout = platform_conf.get(
+            CONF_KEEPALIVE_TIME,
+            node_conf.get(CONF_KEEPALIVE_TIME, update_interval * 2.5)
+        )
         passive = node_conf.get(CONF_PASSIVE, False)
 
         try:
@@ -111,8 +146,29 @@ async def async_setup_entry(
             )
             async_add_entities([sensor_entity])
         except ClassNotFoundError as e:
-            _LOGGER.error(f"failed to create BtMeshSensorEntity {cfg_model.unicast_addr}.{property_id:04x}: {repr(e)}")
+            _LOGGER.debug(f"failed to create BtMeshSensorEntity {cfg_model.unicast_addr:04x}.{property_id:04x}: {repr(e)}")
 
+    # loading Health Fault IDs from file
+    domain_data = hass.data.setdefault(DOMAIN, {})
+
+    if BT_MESH_HEALTH_FAULT_IDS not in domain_data:
+        current_dir = os.path.dirname(__file__)
+        yaml_path = os.path.join(current_dir, STORAGE_HEALTH_FAULT_IDS)
+        try:
+            storage_fault_ids = await hass.async_add_executor_job(load_yaml, yaml_path)
+        except HomeAssistantError as err:
+            _LOGGER.error(f"Failed to load {STORAGE_HEALTH_FAULT_IDS}: {err}")
+            storage_fault_ids = {}
+        domain_data[BT_MESH_HEALTH_FAULT_IDS] = storage_fault_ids
+
+    # setting dispatchers for sensors
+    config_entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.HealthServer),
+            async_add_health,
+        )
+    )
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
@@ -136,6 +192,64 @@ async def async_setup_entry(
     )
 
     return True
+
+
+# BT Mesh Health Server
+class BtMeshHealthEntity(BtMeshEntity, SensorEntity):
+    """Class for Bluetooth Mesh Health."""
+
+    _attr_translation_key = "health"
+
+    entity_description = SensorEntityDescription(
+        key="health",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        name="Node Health",
+    )
+
+    status_opcodes = (
+        HealthOpcode.HEALTH_CURRENT_STATUS,
+    )
+
+
+    @callback
+    def receive_message(
+        self,
+        source: int,
+        app_index: int,
+        destination: Union[int, UUID],
+        message: ParsedMeshMessage
+    ):
+        """Received a new state data for the sensor."""
+
+        super().receive_message(source, app_index, destination, message)
+
+        if self.model_state is not None:
+            self._attr_available = True
+            fault_array = self.model_state.fault_array
+
+            if fault_array:
+                company_id = self.model_state.company_id
+                health_fault_ids = self.hass.data.get(DOMAIN, {}).get(BT_MESH_HEALTH_FAULT_IDS, {})
+                standard_ids = health_fault_ids.get("standard", {})
+                vendor_ids = health_fault_ids.get("vendors", {}).get(company_id, {})
+
+                errors_list = []
+                for code in fault_array:
+                    resolved_text = vendor_ids.get(code) or standard_ids.get(code)
+                    if resolved_text:
+                        errors_list.append(resolved_text)
+                    else:
+                        errors_list.append(f"Error (Vendor: {company_id:04x}, Code: {code:04x})")
+
+                self._attr_native_value = "error"
+                self._attr_extra_state_attributes = {"errors_list": errors_list}
+            else:
+                self._attr_native_value = "ok"
+                self._attr_extra_state_attributes = None
+        else:
+            self._attr_available = False
+
+        self.async_write_ha_state()
 
 
 # BT Mesh Generic Battery Server
@@ -189,6 +303,7 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
         self._attr_unique_id = BtMeshEntity.unique_id_sensor(self.cfg_model, self.property_id)
         self._attr_name = BtMeshEntity.name_sensor(self.cfg_model, self.property_id)
 
+    @callback
     def receive_message(
         self,
         source: int,
@@ -202,7 +317,7 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
             case SensorOpcode.SENSOR_STATUS:
                 for property in message[opcode_name]:
                     if property.sensor_setting_property_id == self.property_id:
-                        #self.update_model_state_thr(property)
+                        # self.update_model_state_thr(property)
                         self.update_model_state(property)
                         break
             case _:
@@ -318,18 +433,6 @@ class BtMeshSensor_Precise_Present_Ambient_Temperature(BtMeshSensorEntity):
     )
     argument_keys = ["precise_present_ambient_temperature", "temperature"]
 
-class BtMeshSensor_Precise_Present_Ambient_Temperature(BtMeshSensorEntity):
-    """Ambient Temperature sensor"""
-
-    property_id = PropertyID.PRECISE_PRESENT_AMBIENT_TEMPERATURE
-    entity_description = SensorEntityDescription(
-        key="precise_present_ambient_temperature",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        state_class=SensorStateClass.MEASUREMENT,
-        name="Ambient temperatire",
-    )
-    argument_keys = ["precise_present_ambient_temperature", "temperature"]
 
 class BtMeshSensor_Present_Ambient_Relative_Humidity(BtMeshSensorEntity):
     """Ambient Humidity sensor"""
@@ -344,6 +447,7 @@ class BtMeshSensor_Present_Ambient_Relative_Humidity(BtMeshSensorEntity):
     )
     argument_keys = ["present_ambient_relative_humidity", "humidity"]
 
+
 class BtMeshSensor_Present_Indoor_Relative_Humidity(BtMeshSensorEntity):
     """Indoor Humidity sensor"""
 
@@ -356,6 +460,7 @@ class BtMeshSensor_Present_Indoor_Relative_Humidity(BtMeshSensorEntity):
         name="Indoor humidity",
     )
     argument_keys = ["present_indoor_relative_humidity", "humidity"]
+
 
 class BtMeshSensor_Present_Outdoor_Relative_Humidity(BtMeshSensorEntity):
     """Outdoor Humidity sensor"""
@@ -371,14 +476,28 @@ class BtMeshSensor_Present_Outdoor_Relative_Humidity(BtMeshSensorEntity):
     argument_keys = ["present_outdoor_relative_humidity", "humidity"]
 
 
+class BtMeshSensor_Presssure(BtMeshSensorEntity):
+    """Pressure sensor"""
+
+    property_id = PropertyID.PRESSURE
+    entity_description = SensorEntityDescription(
+        key="pressure",
+        device_class=SensorDeviceClass.PRESSURE,
+        native_unit_of_measurement=UnitOfPressure.PA,
+        state_class=SensorStateClass.MEASUREMENT,
+        name="Pressure",
+    )
+    argument_keys = ["pressure", "pressure"]
+
+
 class BtMeshSensorEntityFactory(object):
     @staticmethod
     def get(property_id: PropertyID) -> object:
-        if type(property_id) != PropertyID:
+        if type(property_id) is not PropertyID:
             raise ValueError("property_id must be PropertyID")
 
         raw_subclasses_ = BtMeshSensorEntity.__subclasses__()
-        classes: dict[int, Callable[..., object]] = {c.property_id:c for c in raw_subclasses_}
+        classes: dict[int, Callable[..., object]] = {c.property_id: c for c in raw_subclasses_}
         class_ = classes.get(property_id, None)
         if class_ is not None:
             return class_

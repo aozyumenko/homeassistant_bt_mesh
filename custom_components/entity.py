@@ -10,6 +10,7 @@ from uuid import UUID
 from bluetooth_mesh.messages.properties import PropertyID
 from bluetooth_mesh.utils import ParsedMeshMessage
 
+from homeassistant.core import callback
 from homeassistant.helpers.entity import Entity, DeviceInfo
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect,
@@ -37,7 +38,6 @@ from .const import (
 
 import logging
 _LOGGER = logging.getLogger(__name__)
-
 
 
 class ClassNotFoundError(Exception):
@@ -77,14 +77,13 @@ class BtMeshEntity(Entity):
     def name_sensor(cfg_model: MeshCfgModel, property_id: PropertyID) -> str:
         return f"{cfg_model.unicast_addr:04x}-{BtMeshModelId.get_name(cfg_model.model_id)}-{BtSensorAttrPropertyId.get_name(property_id)}"
 
-
     def __init__(
         self,
         app: BtMeshApplication,
         cfg_model: MeshCfgModel,
-        update_timeout: float=G_MESH_CACHE_UPDATE_TIMEOUT,
-        invalidate_timeout: float=G_MESH_CACHE_INVALIDATE_TIMEOUT,
-        passive: bool=False
+        update_timeout: float = G_MESH_CACHE_UPDATE_TIMEOUT,
+        invalidate_timeout: float = G_MESH_CACHE_INVALIDATE_TIMEOUT,
+        passive: bool = False
     ) -> None:
         """Initialize model entity."""
         self.app = app
@@ -93,12 +92,16 @@ class BtMeshEntity(Entity):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, str(self.cfg_model.device.unique_id))},
             name=f"{DOMAIN}_{self.cfg_model.device.unicast_addr:04x}",
-            manufacturer=company[self.cfg_model.device.cid] \
-                if self.cfg_model.device.cid in company \
-                    else f"{self.cfg_model.device.cid:04x}",
-            model=product[(self.cfg_model.device.cid, self.cfg_model.device.pid)] \
-                if (self.cfg_model.device.cid, self.cfg_model.device.pid) in product \
-                    else f"{self.cfg_model.device.cid:04x}:{self.cfg_model.device.pid:04x}",
+            manufacturer=(
+                company[self.cfg_model.device.cid]
+                if self.cfg_model.device.cid in company
+                else f"{self.cfg_model.device.cid:04x}"
+            ),
+            model=(
+                product[(self.cfg_model.device.cid, self.cfg_model.device.pid)]
+                if (self.cfg_model.device.cid, self.cfg_model.device.pid) in product
+                else f"{self.cfg_model.device.cid:04x}:{self.cfg_model.device.pid:04x}"
+            ),
             model_id=f"{self.cfg_model.device.cid:04x}:{self.cfg_model.device.pid:04x}",
             sw_version=f"{self.cfg_model.device.vid:04x}",
         )
@@ -122,14 +125,13 @@ class BtMeshEntity(Entity):
 
     async def async_added_to_hass(self) -> None:
         """Connect to an updater."""
-        _LOGGER.debug(f"async_added_to_hass()")
-        # TODO: rework for coordinator
+        _LOGGER.debug("async_added_to_hass()")
         if hasattr(self, 'status_opcodes'):
             for opcode in self.status_opcodes:
                 async_dispatcher_connect(
                     self.app.hass,
                     BT_MESH_MSG.format(self.unicast_addr, opcode),
-                    self.receive_message,
+                    self._receive_message,
                 )
 
         async_dispatcher_connect(
@@ -140,6 +142,19 @@ class BtMeshEntity(Entity):
 
         self._query_model_state()
 
+    @callback
+    def _receive_message(
+        self,
+        source: int,
+        app_index: int,
+        destination: Union[int, UUID],
+        message: ParsedMeshMessage
+    ):
+        """This method must be located within the base class
+           and cannot be overridden."""
+        self.receive_message(source, app_index, destination, message)
+
+    @callback
     def receive_message(
         self,
         source: int,
@@ -147,8 +162,10 @@ class BtMeshEntity(Entity):
         destination: Union[int, UUID],
         message: ParsedMeshMessage
     ):
+        """Receives a message and stores it in the cache.
+           This method can be safely overridden in a child class."""
         opcode_name = BtMeshOpcode.get(message.opcode).name.lower()
-        #self.update_model_state_thr(message[opcode_name])
+        # self.update_model_state_thr(message[opcode_name])
         self.update_model_state(message[opcode_name])
 
     @property
@@ -221,12 +238,10 @@ class BtMeshEntity(Entity):
         else:
             _LOGGER.debug(f"{self.name} is passive, ignore query")
 
-
     async def query_model_state(self) -> any:
         return None
 
     def invalidate_model_state(self):
-#        _LOGGER.debug(f"Invalidate model state {self.name}")
         self._last_update = time.time() - self.update_timeout
         self._query_model_state()
 
