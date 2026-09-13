@@ -141,7 +141,7 @@ class BtMeshBinarySensorEntity(BtMeshEntity, BinarySensorEntity):
         )
 
     # FIXME: cleanup
-    async def _sensor_get(self, prop):
+    def _sensor_get(self, prop):
         """Extract sensor value from response."""
         try:
             for key in self.argument_keys:
