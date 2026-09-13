@@ -54,6 +54,7 @@ async def async_setup_entry(
             CONF_UPDATE_TIME,
             node_conf.get(CONF_UPDATE_TIME, update_interval)
         )
+        # FIXME: incorrect behavior when equal to 0
         invalidate_timeout = platform_conf.get(
             CONF_KEEPALIVE_TIME,
             node_conf.get(CONF_KEEPALIVE_TIME, update_interval * 2.5)
@@ -123,6 +124,10 @@ class BtMeshBinarySensorEntity(BtMeshEntity, BinarySensorEntity):
                 for property in message[opcode_name]:
                     if property.sensor_setting_property_id == self.property_id:
                         self.update_model_state(property)
+
+                        self._attr_is_on = self._sensor_get(property)
+                        self._attr_available = self._attr_is_on is not None
+                        self.async_write_ha_state()
                         break
             case _:
                 pass
@@ -134,6 +139,19 @@ class BtMeshBinarySensorEntity(BtMeshEntity, BinarySensorEntity):
             app_index=self.app_key,
             property_id=self.property_id,
         )
+
+    # FIXME: cleanup
+    async def _sensor_get(self, prop):
+        """Extract sensor value from response."""
+        try:
+            for key in self.argument_keys:
+                prop = prop[key]
+            return bool(prop)
+        except TypeError:
+            pass
+        except Exception as e:
+            _LOGGER.error(f"BtMeshSensor: sensor_get(): {e}")
+            return None
 
     async def sensor_get(self):
         """Extract sensor value from response."""

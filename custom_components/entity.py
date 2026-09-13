@@ -169,6 +169,11 @@ class BtMeshEntity(Entity):
         self.update_model_state(message[opcode_name])
 
     @property
+    def should_poll(self) -> bool:
+        """Return the polling state."""
+        return not self.passive
+
+    @property
     def unicast_addr(self) -> int:
         """Bt mesh entity unicast address"""
         return self.cfg_model.unicast_addr
@@ -199,8 +204,6 @@ class BtMeshEntity(Entity):
 
     def update_model_state(self, state: any):
         """Update Bt mesh entity model state."""
-#        if self.name == "00fc-LightCTLServer":
-#            _LOGGER.debug(f"Update model state {self.name}: {state}")
         self._last_update = time.time()
         self._model_state = state
         self.schedule_update_ha_state()

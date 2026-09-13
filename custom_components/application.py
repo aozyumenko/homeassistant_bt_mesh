@@ -18,7 +18,7 @@ from bluetooth_mesh.models.generic.dtt import GenericDTTClient
 from bluetooth_mesh.models.generic.ponoff import GenericPowerOnOffClient
 from bluetooth_mesh.models.generic.battery import GenericBatteryClient
 from bluetooth_mesh.models.sensor import SensorServer, SensorSetupServer, SensorClient
-from bluetooth_mesh.models.scene import SceneClient
+from bluetooth_mesh.models.scene import SceneServer, SceneClient
 from bluetooth_mesh.models.light.lightness import LightLightnessClient
 from bluetooth_mesh.models.light.ctl import LightCTLClient
 from bluetooth_mesh.models.light.hsl import LightHSLClient
@@ -90,6 +90,7 @@ class MainElement(Element):
         GenericPowerOnOffClient,
         GenericBatteryClient,
         SceneClient,
+        SceneServer,
         GenericLevelClient,
         SensorClient,
         LightLightnessClient,
