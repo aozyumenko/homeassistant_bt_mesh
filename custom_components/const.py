@@ -6,6 +6,7 @@ from homeassistant.const import Platform
 
 
 DOMAIN: Final = "bt_mesh"
+
 PLATFORMS: Final = (
     Platform.SWITCH,
     Platform.LIGHT,
@@ -60,3 +61,7 @@ G_MESH_CACHE_INVALIDATE_TIMEOUT: Final = 360
 
 G_MESH_CACHE_UPDATE_LONG_TIMEOUT: Final = 360
 G_MESH_CACHE_INVALIDATE_LONG_TIMEOUT: Final = 4320
+
+# Events
+BT_MESH_EVENT: Final = "bt_mesh_event"
+BT_MESH_EVENT_TYPE_SCENE_RECALL:Final = "scene_recall"

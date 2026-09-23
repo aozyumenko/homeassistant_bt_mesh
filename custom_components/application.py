@@ -42,6 +42,7 @@ from bluetooth_mesh.messages.properties import PropertyID
 from bt_mesh_ctrl import BtMeshModelId, BtMeshOpcode
 
 from .time_server import TimeServerMixin
+from .scene_server import SceneServerMixin
 from .const import (
     DEFAULT_DBUS_APP_PATH,
     G_SEND_INTERVAL,
@@ -102,7 +103,7 @@ class MainElement(Element):
     ]
 
 
-class BtMeshApplication(Application, TimeServerMixin):
+class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
     COMPANY_ID = 0x05f1  # Linux Foundation
     PRODUCT_ID = 0x4148  # HA - HomeAssistant
     VERSION_ID = 1
@@ -136,7 +137,6 @@ class BtMeshApplication(Application, TimeServerMixin):
 
     def __init__(self, hass, uuid, path, token=None):
         """Initialize bluetooth_mesh application."""
-
         self.hass = hass
         self._uuid = uuid
         self._token_ring = SimpleTokenRing(uuid=uuid)
@@ -149,7 +149,7 @@ class BtMeshApplication(Application, TimeServerMixin):
         self._lock_get = asyncio.Lock()
 
         super().__init__(self.hass.loop)
-
+        self.logger = _LOGGER
 
 
     # replace parent class members
@@ -168,6 +168,9 @@ class BtMeshApplication(Application, TimeServerMixin):
 
         # start Time Server
         self.time_server_init()
+
+        # start Sensor Server
+        self.scene_server_init()
 
         # register message callbacks on all supported opcodes
         for sub in self.subs:

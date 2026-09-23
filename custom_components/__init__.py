@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import voluptuous as vol
-from typing import Final
+from typing import Any, Final
 from dataclasses import dataclass
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er
@@ -204,6 +205,7 @@ async def track_mesh_conf(hass: HomeAssistant, entry: BtMeshConfigEntry):
 async def load_devices_config(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bool:
     """Loading node models (except the sensor) from the config and adding them to the HA."""
     mesh_conf = entry.runtime_data.mesh_conf
+
     _LOGGER.debug(f"load_devices_config(): start, {entry.runtime_data.domain_conf}")
 
     for cfg_model in mesh_conf.get_models():
