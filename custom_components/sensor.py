@@ -269,6 +269,20 @@ class BtMeshGenericBatteryEntity(BtMeshEntity, SensorEntity):
         GenericBatteryOpcode.GENERIC_BATTERY_STATUS,
     )
 
+    @callback
+    def receive_message(
+        self,
+        source: int,
+        app_index: int,
+        destination: Union[int, UUID],
+        message: ParsedMeshMessage
+    ):
+        """Received a new state data for the sensor."""
+        super().receive_message(source, app_index, destination, message)
+        self._attr_native_value = message.generic_battery_status.battery_level
+        self._attr_available = self._attr_native_value is not None
+        self.async_write_ha_state()
+
     async def query_model_state(self) -> any:
         """Query GenericBattery state."""
         return await self.app.generic_battery_get(
@@ -315,10 +329,14 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
         opcode_name = BtMeshOpcode.get(message.opcode).name.lower()
         match message.opcode:
             case SensorOpcode.SENSOR_STATUS:
-                for property in message[opcode_name]:
-                    if property.sensor_setting_property_id == self.property_id:
-                        # self.update_model_state_thr(property)
-                        self.update_model_state(property)
+                for prop in message[opcode_name]:
+                    if prop.sensor_setting_property_id == self.property_id:
+                        # self.update_model_state_thr(prop)
+                        self.update_model_state(prop)
+
+                        self._attr_native_value = self._sensor_get(prop)
+                        self._attr_available = self._attr_native_value is not None
+                        self.async_write_ha_state()
                         break
             case _:
                 pass
@@ -330,6 +348,18 @@ class BtMeshSensorEntity(BtMeshEntity, SensorEntity):
             app_index=self.app_key,
             property_id=self.property_id,
         )
+
+    def _sensor_get(self, prop):
+        """Extract sensor value from response."""
+        try:
+            for key in self.argument_keys:
+                prop = prop[key]
+            return round(float(prop), self.argument_round)
+        except TypeError:
+            pass
+        except Exception as e:
+            _LOGGER.error(f"BtMeshSensor: sensor_get(): {e}")
+            return None
 
     async def sensor_get(self):
         """Extract sensor value from response."""
