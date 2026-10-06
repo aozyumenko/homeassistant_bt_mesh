@@ -234,7 +234,10 @@ class BtMeshEntity(Entity):
 
         if not self.passive:
             if self._query_task is None or self._query_task.done():
-                self._query_task = self.app.hass.async_create_task(query_model_state_task())
+                #self._query_task = self.app.hass.async_create_task(query_model_state_task())
+                self._query_task = asyncio.run_coroutine_threadsafe(
+                    query_model_state_task(), self.app.hass.loop
+                )
                 _LOGGER.debug(f"Querye model state {self.name}")
             else:
                 _LOGGER.debug(f"{self.name} already running, ignore query")
