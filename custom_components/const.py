@@ -11,6 +11,7 @@ PLATFORMS: Final = (
     Platform.SWITCH,
     Platform.LIGHT,
     Platform.SELECT,
+    Platform.COVER,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.CLIMATE,

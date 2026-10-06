@@ -26,6 +26,7 @@ from bluetooth_mesh.models.vendor.thermostat import ThermostatClient
 from bluetooth_mesh.models.time import TimeServer, TimeSetupServer
 from bluetooth_mesh.messages.health import HealthOpcode
 from bluetooth_mesh.messages.generic.onoff import GenericOnOffOpcode
+from bluetooth_mesh.messages.generic.level import GenericLevelOpcode
 from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
 from bluetooth_mesh.messages.light.lightness import LightLightnessOpcode
 from bluetooth_mesh.messages.light.ctl import LightCTLOpcode
@@ -123,6 +124,7 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
         (HealthClient, HealthOpcode.HEALTH_CURRENT_STATUS),
         (HealthClient, HealthOpcode.HEALTH_FAULT_STATUS),
         (GenericOnOffClient, GenericOnOffOpcode.GENERIC_ONOFF_STATUS),
+        (GenericLevelClient, GenericLevelOpcode.GENERIC_LEVEL_STATUS),
         (GenericBatteryClient, GenericBatteryOpcode.GENERIC_BATTERY_STATUS),
         (SensorClient, SensorOpcode.SENSOR_STATUS),
         (SensorClient, SensorOpcode.SENSOR_DESCRIPTOR_STATUS),
@@ -297,6 +299,38 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
             destination=destination,
             app_index=app_index,
             on_power_up=on_power_up,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    # GenericLevel client
+    @bluetooth_mesh_get
+    async def generic_level_get(self, destination: int, app_index: int) -> any:
+        """Get GenericLevel state"""
+        client = self.elements[0][GenericLevelClient]
+        return await client.get(
+            destination=destination,
+            app_index=app_index,
+            send_interval=G_SEND_INTERVAL,
+            timeout=G_TIMEOUT
+        )
+
+    @bluetooth_mesh_set
+    async def generic_level_set(
+        self,
+        destination: int,
+        app_index: int,
+        level: int,
+        transition_time: float=None
+    ) -> any:
+        """Set GenericLevel state"""
+        client = self.elements[0][GenericLevelClient]
+        return await client.set(
+            destination=destination,
+            app_index=app_index,
+            level=level,
+            delay=None if transition_time is None else 0,
+            transition_time=transition_time,
             send_interval=G_SEND_INTERVAL,
             timeout=G_TIMEOUT
         )
