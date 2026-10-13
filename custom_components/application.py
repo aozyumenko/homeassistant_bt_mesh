@@ -2,45 +2,31 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Union
 from uuid import UUID
 
-#from dataclasses import asdict, dataclass, field
-from dataclasses import dataclass
-
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
+from bluetooth_mesh.utils import ParsedMeshMessage
 from bluetooth_mesh.application import Application, Element, Capabilities
 from bluetooth_mesh.messages.config import GATTNamespaceDescriptor
+from bluetooth_mesh.messages.properties import PropertyID
 from bluetooth_mesh.models import ConfigClient, HealthClient
 from bluetooth_mesh.models.generic.onoff import GenericOnOffClient
 from bluetooth_mesh.models.generic.level import GenericLevelClient
 from bluetooth_mesh.models.generic.dtt import GenericDTTClient
 from bluetooth_mesh.models.generic.ponoff import GenericPowerOnOffClient
 from bluetooth_mesh.models.generic.battery import GenericBatteryClient
-from bluetooth_mesh.models.sensor import SensorServer, SensorSetupServer, SensorClient
+from bluetooth_mesh.models.sensor import SensorClient
 from bluetooth_mesh.models.scene import SceneServer, SceneClient
 from bluetooth_mesh.models.light.lightness import LightLightnessClient
 from bluetooth_mesh.models.light.ctl import LightCTLClient
 from bluetooth_mesh.models.light.hsl import LightHSLClient
 from bluetooth_mesh.models.vendor.thermostat import ThermostatClient
 from bluetooth_mesh.models.time import TimeServer, TimeSetupServer
-from bluetooth_mesh.messages.health import HealthOpcode
-from bluetooth_mesh.messages.generic.onoff import GenericOnOffOpcode
-from bluetooth_mesh.messages.generic.level import GenericLevelOpcode
-from bluetooth_mesh.messages.generic.battery import GenericBatteryOpcode
-from bluetooth_mesh.messages.light.lightness import LightLightnessOpcode
-from bluetooth_mesh.messages.light.ctl import LightCTLOpcode
-from bluetooth_mesh.messages.light.hsl import LightHSLOpcode
-from bluetooth_mesh.messages.sensor import SensorOpcode, SensorSetupOpcode
-from bluetooth_mesh.messages.vendor.thermostat import (
-    ThermostatOpcode,
-    ThermostatSubOpcode,
-    ThermostatMode,
-    ThermostatStatusCode,
-)
-from bluetooth_mesh.messages.properties import PropertyID
-
-from bt_mesh_ctrl import BtMeshModelId, BtMeshOpcode
+from bluetooth_mesh.messages.generic.ponoff import GenericOnPowerUp
+from bluetooth_mesh.messages.vendor.thermostat import ThermostatMode
 
 from .time_server import TimeServerMixin
 from .scene_server import SceneServerMixin
@@ -48,14 +34,11 @@ from .const import (
     DEFAULT_DBUS_APP_PATH,
     G_SEND_INTERVAL,
     G_TIMEOUT,
-    G_UNACK_RETRANSMISSIONS,
-    G_UNACK_INTERVAL,
     BT_MESH_MSG,
 )
 
 import logging
 _LOGGER = logging.getLogger(__name__)
-
 
 
 class SimpleTokenRing:
@@ -120,23 +103,6 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
     _uuid: str
     hass: HomeAssistant
 
-    subs = (
-        (HealthClient, HealthOpcode.HEALTH_CURRENT_STATUS),
-        (HealthClient, HealthOpcode.HEALTH_FAULT_STATUS),
-        (GenericOnOffClient, GenericOnOffOpcode.GENERIC_ONOFF_STATUS),
-        (GenericLevelClient, GenericLevelOpcode.GENERIC_LEVEL_STATUS),
-        (GenericBatteryClient, GenericBatteryOpcode.GENERIC_BATTERY_STATUS),
-        (SensorClient, SensorOpcode.SENSOR_STATUS),
-        (SensorClient, SensorOpcode.SENSOR_DESCRIPTOR_STATUS),
-        (LightLightnessClient, LightLightnessOpcode.LIGHT_LIGHTNESS_STATUS),
-        (LightCTLClient, LightCTLOpcode.LIGHT_CTL_STATUS),
-        (LightCTLClient, LightCTLOpcode.LIGHT_CTL_TEMPERATURE_RANGE_STATUS),
-        (LightHSLClient, LightHSLOpcode.LIGHT_HSL_STATUS),
-        (LightHSLClient, LightHSLOpcode.LIGHT_HSL_TARGET_STATUS),
-        (ThermostatClient, ThermostatOpcode.VENDOR_THERMOSTAT),
-    )
-
-
     def __init__(self, hass, uuid, path, token=None):
         """Initialize bluetooth_mesh application."""
         self.hass = hass
@@ -152,7 +118,6 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
 
         super().__init__(self.hass.loop)
         self.logger = _LOGGER
-
 
     # replace parent class members
     def get_namespace(self):
@@ -174,12 +139,13 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
         # start Sensor Server
         self.scene_server_init()
 
-        # register message callbacks on all supported opcodes
-        for sub in self.subs:
-            client = self.elements[0][sub[0]]
-            opcode = sub[1]
-            client.app_message_callbacks[opcode].add(self._bt_mesh_msg_callback)
-
+        for elem_idx, elem in self.ELEMENTS.items():
+            for model in elem.MODELS:
+                if model is ConfigClient:
+                    continue
+                for opcode in model.OPCODES:
+                    client = self.elements[elem_idx][model]
+                    client.app_message_callbacks[opcode].add(self._bt_mesh_msg_callback)
 
     ##################################################
     def display_numeric(self, type: str, number: int):
@@ -195,7 +161,6 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
             token = await self.join()
         return token
     ##########################################
-
 
     # Entity section
     def _bt_mesh_msg_callback(
@@ -215,6 +180,7 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
             destination,
             message
         )
+        return False
 
     def bluetooth_mesh_get(query_func):
         """Decorator for getting the state of a Bt mesh model with a global lock,
@@ -241,7 +207,6 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
             return None
         return wrapper
 
-
     # GenericOnOff client
     @bluetooth_mesh_get
     async def generic_onoff_get(self, destination: int, app_index: int) -> any:
@@ -260,7 +225,7 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
         destination: int,
         app_index: int,
         onoff: int,
-        transition_time: float=None
+        transition_time: float = None
     ) -> any:
         """Set GenericOnOff state"""
         client = self.elements[0][GenericOnOffClient]
@@ -321,7 +286,7 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
         destination: int,
         app_index: int,
         level: int,
-        transition_time: float=None
+        transition_time: float = None
     ) -> any:
         """Set GenericLevel state"""
         client = self.elements[0][GenericLevelClient]
@@ -353,7 +318,7 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
         destination: int,
         app_index: int,
         lightness: int,
-        transition_time: float=None
+        transition_time: float = None
     ) -> any:
         """Set LightLightness lightness"""
         client = self.elements[0][LightLightnessClient]
@@ -397,7 +362,7 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
         app_index: int,
         ctl_lightness: int,
         ctl_temperature: int,
-        transition_time: float=None
+        transition_time: float = None
     ) -> any:
         """Set LightCTL state"""
         try:
@@ -448,7 +413,7 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
         hsl_lightness: int,
         hsl_hue: int,
         hsl_saturation: int,
-        transition_time: float=None
+        transition_time: float = None
     ) -> any:
         """Set LightHSL lightness, hue and saturation"""
         client = self.elements[0][LightHSLClient]
@@ -506,7 +471,6 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
                 if property_id == property.sensor_setting_property_id:
                     return property
         return None
-
 
     # Vendor Thermostat
     @bluetooth_mesh_get
