@@ -1,8 +1,8 @@
 """BT Mesh Thermostat."""
 from __future__ import annotations
 
-import asyncio
-
+from typing import Any, Union
+from uuid import UUID
 from construct import Container
 
 from homeassistant.core import HomeAssistant, callback
@@ -22,37 +22,33 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 
-from bluetooth_mesh.models.vendor.thermostat import ThermostatClient
+from bluetooth_mesh.utils import ParsedMeshMessage
 from bluetooth_mesh.messages.vendor.thermostat import (
     ThermostatOpcode,
     ThermostatSubOpcode,
-    ThermostatMode,
     ThermostatStatusCode,
 )
 
 from bt_mesh_ctrl import BtMeshModelId
+from bt_mesh_ctrl.mesh_cfgclient_conf import MeshCfgModel
 
 from .application import BtMeshApplication
 from .entity import BtMeshEntity
 from .const import (
     BT_MESH_DISCOVERY_ENTITY_NEW,
-    BT_MESH_MSG,
     CONF_UPDATE_TIME,
     CONF_KEEPALIVE_TIME,
     G_MESH_CACHE_UPDATE_TIMEOUT,
     G_MESH_CACHE_INVALIDATE_TIMEOUT,
-    G_SEND_INTERVAL,
-    G_TIMEOUT,
 )
 
 import logging
 _LOGGER = logging.getLogger(__name__)
 
 
-
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: ConfigType,
     add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up BT Mesh Climate entity."""
@@ -64,11 +60,14 @@ async def async_setup_entry(
         node_conf: dict
     ) -> None:
         platform_conf = node_conf.get(Platform.LIGHT, None) or {}
-        update_timeout = platform_conf.get(CONF_UPDATE_TIME, \
-            node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT))
-        invalidate_timeout = platform_conf.get(CONF_KEEPALIVE_TIME, \
-            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT))
-
+        update_timeout = platform_conf.get(
+            CONF_UPDATE_TIME,
+            node_conf.get(CONF_UPDATE_TIME, G_MESH_CACHE_UPDATE_TIMEOUT)
+        )
+        invalidate_timeout = platform_conf.get(
+            CONF_KEEPALIVE_TIME,
+            node_conf.get(CONF_KEEPALIVE_TIME, G_MESH_CACHE_INVALIDATE_TIMEOUT)
+        )
         add_entities(
             [
                 BtMeshClimate_Thermostat(
@@ -83,7 +82,9 @@ async def async_setup_entry(
     config_entry.async_on_unload(
         async_dispatcher_connect(
             hass,
-            BT_MESH_DISCOVERY_ENTITY_NEW.format(BtMeshModelId.ThermostatServer),
+            BT_MESH_DISCOVERY_ENTITY_NEW.format(
+                BtMeshModelId.ThermostatServer
+            ),
             async_add_climate,
         )
     )
@@ -109,6 +110,22 @@ class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
 
     _flag_update_range = True
 
+    def update_climate_entity_state(self, state: Container):
+        """Convert BT Mesh node state to Climate Entity state."""
+        self._attr_current_temperature = state.present_temperature
+        self._attr_target_temperature = state.target_temperature
+        if state.onoff_status:
+            if state.heater_status:
+                self._attr_hvac_action = HVACAction.HEATING
+            else:
+                self._attr_hvac_action = HVACAction.IDLE
+            self._attr_hvac_mode = HVACMode.HEAT
+        else:
+            self._attr_hvac_action = HVACAction.OFF
+            self._attr_hvac_mode = HVACMode.OFF
+        self._attr_available = hasattr(self, "_attr_min_temp") and \
+            hasattr(self, "_attr_max_temp")
+
     def receive_message(
         self,
         source: int,
@@ -120,15 +137,17 @@ class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
         vendor_message = message['vendor_thermostat']
         match vendor_message.subopcode:
             case ThermostatSubOpcode.THERMOSTAT_STATUS:
-                if vendor_message.thermostat_status.status_code == ThermostatStatusCode.GOOD:
-                    #self.update_model_state_thr(vendor_message.thermostat_status)
-                    self.update_model_state(vendor_message.thermostat_status)
+                state = vendor_message.thermostat_status
+                if state.status_code == ThermostatStatusCode.GOOD:
+                    self.update_model_state(state)
+                    self.update_climate_entity_state(state)
+                    self.async_write_ha_state()
             case ThermostatSubOpcode.THERMOSTAT_RANGE_STATUS:
-                self._attr_min_temp = vendor_message.thermostat_range_status.min_temperature
-                self._attr_max_temp = vendor_message.thermostat_range_status.max_temperature
+                state = vendor_message.thermostat_range_status
+                self._attr_min_temp = state.min_temperature
+                self._attr_max_temp = state.max_temperature
             case _:
                 pass
-
 
     async def query_model_state(self) -> any:
         """Query Vendor Thermostat state."""
@@ -173,28 +192,10 @@ class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
 
     async def async_update(self):
         """Update the data from the thermostat."""
-
         if self.model_state is not None:
-            self._attr_current_temperature = self.model_state.present_temperature
-            self._attr_target_temperature = self.model_state.target_temperature
-            if self.model_state.onoff_status:
-                if self.model_state.heater_status:
-                    self._attr_hvac_action = HVACAction.HEATING
-                else:
-                    self._attr_hvac_action = HVACAction.IDLE
-                self._attr_hvac_mode = HVACMode.HEAT
-            else:
-                self._attr_hvac_action = HVACAction.OFF
-                self._attr_hvac_mode = HVACMode.OFF
-            self._attr_available = hasattr(self, "_attr_min_temp") and \
-                hasattr(self, "_attr_max_temp")
+            self.update_climate_entity_state(self.model_state)
         else:
-            self._attr_current_temperature = None
-            self._attr_target_temperature = None
-            self._attr_hvac_action = None
-            self._attr_hvac_mode = None
             self._attr_available = False
-
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target operation mode."""
@@ -227,7 +228,6 @@ class BtMeshClimate_Thermostat(BtMeshEntity, ClimateEntity):
                         onoff = self.model_state.onoff_status
             else:
                 onoff = self.model_state.onoff_status
-
 
             if ATTR_TEMPERATURE in kwargs:
                 temperature = kwargs[ATTR_TEMPERATURE]
