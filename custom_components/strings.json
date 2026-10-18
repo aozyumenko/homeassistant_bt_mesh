@@ -12,5 +12,11 @@
     "progress": {
       "join_start": "[%key:common::config_flow::progress::join_start%]"
     }
+  },
+  "issues": {
+    "dbus_connection_error": {
+      "title": "DBus connection error",
+      "description": "The integration is unable to establish a connection to the bluetooth-meshd service. Please check whether the DBus service or the bluetooth-meshd service is running."
+    }
   }
 }

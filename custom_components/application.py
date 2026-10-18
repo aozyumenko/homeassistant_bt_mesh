@@ -7,6 +7,7 @@ from uuid import UUID
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers import issue_registry as ir
 
 from bluetooth_mesh.utils import ParsedMeshMessage
 from bluetooth_mesh.application import Application, Element, Capabilities
@@ -31,14 +32,20 @@ from bluetooth_mesh.messages.vendor.thermostat import ThermostatMode
 from .time_server import TimeServerMixin
 from .scene_server import SceneServerMixin
 from .const import (
+    DOMAIN,
     DEFAULT_DBUS_APP_PATH,
     G_SEND_INTERVAL,
     G_TIMEOUT,
     BT_MESH_MSG,
+    DBUS_CONNECTION_ERROR_ISSUE_ID
 )
 
 import logging
 _LOGGER = logging.getLogger(__name__)
+
+
+NOTIFICATION_ID = "dbus_connection_error"
+ISSUE_ID = "dbus_connection_error"
 
 
 class SimpleTokenRing:
@@ -102,6 +109,9 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
     _token_ring: SimpleTokenRing
     _uuid: str
     hass: HomeAssistant
+    _connected: bool
+    _connection_keep_alive: bool
+    _connection_task: asyncio.Task
 
     def __init__(self, hass, uuid, path, token=None):
         """Initialize bluetooth_mesh application."""
@@ -116,6 +126,9 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
 
         self._lock_get = asyncio.Lock()
 
+        self._connected = False
+        self._connection_task = None
+
         super().__init__(self.hass.loop)
         self.logger = _LOGGER
 
@@ -127,8 +140,88 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
     def token_ring(self) -> SimpleTokenRing:
         return self._token_ring
 
+    async def dbus_connected(self, owner) -> None:
+        await super().dbus_connected(owner)
+
+        _LOGGER.debug("D-Bus connected")
+
+        self._connected = True
+        ir.async_delete_issue(self.hass, DOMAIN, DBUS_CONNECTION_ERROR_ISSUE_ID)
+
     def dbus_disconnected(self, owner) -> any:
-        pass
+        """Connection to the Dbus lost. Attempting to restore the connection."""
+        self._unregister()
+
+        self.management_interface = None
+        self.node_interface = None
+        self.network_interface = None
+
+        _LOGGER.debug("D-Bus disconnected")
+
+        self._connected = False
+        if self._connection_keep_alive:
+            self.connection_task_start()
+        ir.async_create_issue(
+            self.hass,
+            domain=DOMAIN,
+            issue_id=DBUS_CONNECTION_ERROR_ISSUE_ID,
+            issue_domain=DOMAIN,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="dbus_connection_error",
+        )
+
+    @property
+    def connected(self) -> bool:
+        """Connection to the Bluetooth Mesh service status."""
+        return self._connected
+
+    def connection_task_start(self):
+        """A task is initiated to connect to the DBus and the bluetooth-meshd."""
+        if self._connection_task and not self._connection_task.done():
+            return
+
+        self._connection_keep_alive = True
+        self._connection_task = self.hass.async_create_task(
+            self._connection_processing()
+        )
+        self._connection_task.add_done_callback(self._connection_done)
+
+    async def connection_task_stop(self):
+        """The connection task is being stopped."""
+        self._connection_keep_alive = False
+        if self._connection_task:
+            self._connection_task.cancel()
+            try:
+                await self._connection_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                _LOGGER.exception("Error cleaning up DBus connection task")
+
+    def _connection_done(self, task: asyncio.Task) -> None:
+        self._connection_task = None
+        try:
+            if not task.cancelled():
+                task.result()
+        except Exception:
+            _LOGGER.exception("Connection task encountered an unhandled exception")
+
+    async def _connection_processing(self):
+        while True:
+            _LOGGER.debug("Attempting to connect to D-Bus...")
+            try:
+                await self.dbus_connect()
+                await asyncio.sleep(1.0)
+                await self.connect()
+                break
+
+            except (FileNotFoundError, ConnectionRefusedError):
+                _LOGGER.debug("D-Bus daemon is not available yet.")
+            except Exception as err:
+                _LOGGER.debug(f"Unexpected error during D-Bus connection: {err}")
+
+            await asyncio.sleep(5.0)
 
     def _register(self):
         super()._register()
@@ -187,6 +280,8 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
            preventing a large number of simultaneous requests."""
         async def wrapper(*args, **kwargs):
             self = args[0]
+            if not self.connected:
+                return None
             async with self._lock_get:
                 try:
                     return await query_func(*args, **kwargs)
@@ -200,6 +295,8 @@ class BtMeshApplication(Application, TimeServerMixin, SceneServerMixin):
            with handling of the Timeout exception."""
         async def wrapper(*args, **kwargs):
             self = args[0]
+            if not self.connected:
+                return None
             try:
                 return await query_func(*args, **kwargs)
             except asyncio.TimeoutError:

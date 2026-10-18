@@ -34,5 +34,11 @@
 
       }
     }
+  },
+  "issues": {
+    "dbus_connection_error": {
+      "title": "Ошибка подключения к DBus",
+      "description": "Интеграции не удается установить соединение со службой bluetooth-meshd. Пожалуйста, проверьте, запущены ли службы DBus или bluetooth-meshd."
+    }
   }
 }

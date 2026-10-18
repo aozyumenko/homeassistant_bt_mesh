@@ -148,13 +148,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> bo
         discovered=set()
     )
 
-    # Function: process exception
-    try:
-        await app.dbus_connect()
-        await app.connect()
-    except Exception as e:
-        _LOGGER.error(f"Failed to connect to dBUS: {e}")
-        return False
+    app.connection_task_start()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -395,5 +389,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: BtMeshConfigEntry) -> b
     """Unloading the BT Mesh platforms."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         app = entry.runtime_data.app
+        await app.connection_task_stop()
         await app.dbus_disconnect()
     return unload_ok

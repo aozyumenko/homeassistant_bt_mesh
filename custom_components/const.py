@@ -66,3 +66,6 @@ G_MESH_CACHE_INVALIDATE_LONG_TIMEOUT: Final = 4320
 # Events
 BT_MESH_EVENT: Final = "bt_mesh_event"
 BT_MESH_EVENT_TYPE_SCENE_RECALL:Final = "scene_recall"
+
+# Issues
+DBUS_CONNECTION_ERROR_ISSUE_ID = "bt_mesh_dbus_connection_error"
