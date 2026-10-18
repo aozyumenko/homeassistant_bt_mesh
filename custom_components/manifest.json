@@ -5,8 +5,8 @@
   "documentation": "https://github.com/aozyumenko/homeassistant_bt_mesh",
   "issue_tracker": "https://github.com/aozyumenko/homeassistant_bt_mesh/issues",
   "requirements": [
-    "aozyumenko-bluetooth-mesh>=1.3.2",
-    "bt_mesh_ctrl>=20260121",
+    "aozyumenko-bluetooth-mesh>=1.4.5",
+    "bt_mesh_ctrl>=20261005",
     "bluetooth-numbers"
   ],
   "dependencies": [],
